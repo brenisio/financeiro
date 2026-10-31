@@ -1,3 +1,10 @@
 # Dados financeiros NUNCA vão pro repo (GitHub Pages é público)
 *.json
+!package.json
+!package-lock.json
 dados/
+
+node_modules/
+test-results/
+playwright-report/
+__pycache__/

@@ -1,0 +1,15 @@
+{
+  "name": "financeiro",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"tests/unit/*.test.js\" && python3 -m unittest discover -s tests/unit -p \"test_*.py\"",
+    "test:ui": "playwright test --workers=4",
+    "test:all": "npm test && npm run test:ui",
+    "serve": "python3 -m http.server 8797 --bind 127.0.0.1"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.10.2",
+    "@playwright/test": "1.64.1"
+  }
+}
