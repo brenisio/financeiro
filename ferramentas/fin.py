@@ -23,7 +23,7 @@ import string
 import sys
 import time
 import unicodedata
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -334,6 +334,66 @@ def cmd_resumo(d, a):
             print(f'  A receber: {brl(tot(receber))}')
 
 
+# ---------- agenda (.ics) — mesmas regras de paraIcs em js/logica.js ----------
+
+def ics_texto(s):
+    return str(s or '').replace('\\', '\\\\').replace(';', '\\;').replace(',', '\\,').replace('\r\n', '\n').replace('\n', '\\n')
+
+
+def ics_dobra(linha):
+    partes, atual, n = [], '', 0
+    for ch in linha:
+        b = len(ch.encode('utf-8'))
+        if n + b > (74 if partes else 75):
+            partes.append(atual)
+            atual, n = '', 0
+        atual += ch
+        n += b
+    partes.append(atual)
+    return '\r\n '.join(partes)
+
+
+def soma_dias(iso, n):
+    return (date.fromisoformat(iso) + timedelta(days=n)).isoformat()
+
+
+def para_ics(d, h, agora=None):
+    agora = agora or datetime.now(timezone.utc)
+    desde = soma_dias(h, -60)
+    its = sorted((x for x in d['lancamentos'] if str(x.get('vencimento', '')) >= desde or not x.get('pago')),
+                 key=lambda x: x['vencimento'])
+    linhas = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Financeiro Breno//PT-BR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+              'X-WR-CALNAME:Financeiro', 'X-WR-TIMEZONE:America/Sao_Paulo']
+    for x in its:
+        receber, pago = x.get('natureza') == 'receber', bool(x.get('pago'))
+        valor_txt = brl(x['valor']) + (f' (sua parte {brl(parte_minha(x))})' if x.get('outroValor') else '')
+        prefixo = ('Recebido: ' if receber else 'Pago: ') if pago else ('Receber: ' if receber else 'Pagar: ')
+        titulo = f'{prefixo}{x.get("descricao") or "conta"} · {valor_txt}'
+        desc = '\n'.join(t for t in (
+            f'Valor: {brl(x["valor"])}',
+            f'Sua parte: {brl(parte_minha(x))} · {x.get("outroNome")}: {brl(x["outroValor"])}' if x.get('outroValor') else None,
+            x.get('obs') or None,
+            f'Código: {x["codigo"]}' if x.get('codigo') else None,
+            'https://brenisio.github.io/financeiro/') if t)
+        linhas += ['BEGIN:VEVENT', f'UID:{x["id"]}@financeiro-breno', 'DTSTAMP:' + agora.strftime('%Y%m%dT%H%M%SZ'),
+                   'DTSTART;VALUE=DATE:' + x['vencimento'].replace('-', ''),
+                   'DTEND;VALUE=DATE:' + soma_dias(x['vencimento'], 1).replace('-', ''),
+                   'SUMMARY:' + ics_texto(titulo), 'DESCRIPTION:' + ics_texto(desc), 'TRANSP:TRANSPARENT']
+        if not pago:
+            for t in ('-P1DT15H', 'PT9H'):  # 9h de 2 dias antes e 9h do dia
+                linhas += ['BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + ics_texto(titulo), 'TRIGGER:' + t, 'END:VALARM']
+        linhas.append('END:VEVENT')
+    linhas.append('END:VCALENDAR')
+    return '\r\n'.join(ics_dobra(l) for l in linhas) + '\r\n'
+
+
+def cmd_agenda(d, a):
+    saida = a.saida or a.arquivo.with_name('financeiro-lembretes.ics')
+    saida.write_bytes(para_ics(d, hoje()).encode('utf-8'))
+    n = sum(1 for x in d['lancamentos'] if not x.get('pago'))
+    print(f'Lembretes de {n} conta(s) em aberto em {saida}. Importe no Google Agenda (Configurações → Importar).')
+
+
 # ---------- CLI ----------
 
 def main(argv=None):
@@ -391,6 +451,9 @@ def main(argv=None):
     s = sub.add_parser('resumo', help='soma faturas e contas por mês')
     s.add_argument('--mes', help='AAAA-MM')
 
+    s = sub.add_parser('agenda', help='gera o .ics de lembretes para importar no Google Agenda')
+    s.add_argument('--saida', type=Path, help='padrão: financeiro-lembretes.ics ao lado do backup')
+
     # "--valor -120,50" (saldo negativo) vira "--valor=-120,50" pro argparse não achar que é uma opção
     argv = list(sys.argv[1:] if argv is None else argv)
     for i in range(len(argv) - 1):
@@ -399,8 +462,8 @@ def main(argv=None):
     a = p.parse_args([x for x in argv if x is not None])
     try:
         d = carregar(a.arquivo)
-        if a.cmd == 'resumo':
-            cmd_resumo(d, a)
+        if a.cmd in ('resumo', 'agenda'):
+            (cmd_resumo if a.cmd == 'resumo' else cmd_agenda)(d, a)
             return 0
         {'fatura': cmd_fatura, 'cartao': cmd_cartao, 'conta': cmd_conta, 'saldo': cmd_saldo, 'pago': cmd_pago}[a.cmd](d, a)
         gravar(a.arquivo, d)

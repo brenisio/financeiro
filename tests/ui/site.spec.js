@@ -291,6 +291,20 @@ test('backup: baixar e abrir de novo dá o mesmo resultado', async ({ page }) =>
   await expect(item(page, 'l1')).toHaveClass(/pago/);
 });
 
+test('lembretes: baixa o .ics para o Google Agenda', async ({ page }) => {
+  await abrirComDados(page);
+  await page.locator('#bt-backup').click();
+  await expect(modal(page).locator('h2')).toHaveText('Backup e lembretes');
+  const [download] = await Promise.all([page.waitForEvent('download'), modal(page).getByRole('button', { name: 'Baixar lembretes (.ics)' }).click()]);
+  expect(download.suggestedFilename()).toBe('financeiro-lembretes.ics');
+  const partes = await (await download.createReadStream()).toArray();
+  const ics = Buffer.concat(partes).toString('utf8').replace(/\r\n /g, '');
+  expect(ics).toContain('SUMMARY:Pagar: Fatura Nubank · R$ 1.300\\,00 (sua parte R$ 1.000\\,00)');
+  expect(ics).toContain('DTSTART;VALUE=DATE:20261110');
+  expect(ics).toContain('SUMMARY:Pago: MEI');
+  await expect(page.locator('#toast')).toContainText('Importe no Google Agenda');
+});
+
 test('abrir backup por cima pede confirmação e avisa se for mais antigo', async ({ page }) => {
   await abrirComDados(page);
   await item(page, 'l1').locator('.check').click(); // alteração local depois do backup

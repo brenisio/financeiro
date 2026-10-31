@@ -200,3 +200,28 @@ class ParteDeOutro(Base):
         self.ok('pago', '--descricao', 'Internet', '--em', '09/11/2026')
         prox = [x for x in self.dados()['lancamentos'] if not x['pago']][0]
         self.assertEqual((prox['vencimento'], prox['outroValor'], prox['outroNome']), ('2026-12-10', 50, 'Agatha'))
+
+
+class Agenda(Base):
+    def test_gera_ics_igual_ao_do_site(self):
+        self.ok('fatura', '--cartao', 'Caixa', '--valor', '2.924,13', '--vencimento', '10/11/2026', '--minimo', '438,62',
+                '--outro-nome', 'Agatha', '--outro-valor', '2.048,92', '--codigo', '10498.18824 62002.134245')
+        self.ok('conta', '--descricao', 'MEI', '--valor', '75,60', '--vencimento', '20/10/2026')
+        self.ok('pago', '--descricao', 'MEI', '--em', '19/10/2026')
+        ics = fin.para_ics(self.dados(), '2026-10-31', fin.datetime(2026, 10, 31, 13, 0, tzinfo=fin.timezone.utc))
+        self.assertTrue(ics.startswith('BEGIN:VCALENDAR\r\n') and ics.endswith('END:VCALENDAR\r\n'))
+        plano = ics.replace('\r\n ', '')
+        self.assertIn('DTSTART;VALUE=DATE:20261110\r\nDTEND;VALUE=DATE:20261111', plano)
+        self.assertIn('SUMMARY:Pagar: Fatura Caixa · R$ 2.924\\,13 (sua parte R$ 875\\,21)', plano)
+        self.assertIn('SUMMARY:Pago: MEI', plano)
+        self.assertEqual(plano.count('BEGIN:VALARM'), 2)
+        for linha in ics.split('\r\n'):
+            self.assertLessEqual(len(linha.encode('utf-8')), 75, linha)
+
+    def test_comando_grava_ao_lado_do_backup_sem_mexer_no_backup(self):
+        self.ok('conta', '--descricao', 'Aluguel', '--valor', '1800', '--vencimento', '05/11/2026')
+        antes = self.arq.read_bytes()
+        out = self.ok('agenda')
+        self.assertIn('1 conta(s)', out)
+        self.assertTrue((self.arq.parent / 'financeiro-lembretes.ics').exists())
+        self.assertEqual(self.arq.read_bytes(), antes)

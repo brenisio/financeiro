@@ -35,6 +35,14 @@ python3 ferramentas/fin.py resumo [--mes 2026-11]
 python3 ferramentas/fin.py fatura ... --outro-nome Agatha --outro-valor 2.048,92
 ```
 
+## Lembretes (Google Agenda)
+
+`python3 ferramentas/fin.py agenda` gera `dados/financeiro-lembretes.ics` (o site faz o mesmo em Backup → "Baixar lembretes").
+Cada conta em aberto vira evento de dia inteiro no vencimento, com aviso 9h de 2 dias antes e 9h do dia; UID fixo por lançamento,
+então reimportar atualiza. Depois de lançar/alterar contas, rode `agenda` e lembre o Breno de importar o .ics
+(agenda.google.com → Configurações → Importar, de preferência numa agenda "Financeiro" com notificação por e-mail).
+`paraIcs` (logica.js) e `para_ics` (fin.py) têm de gerar bytes idênticos.
+
 Ao relançar uma fatura, repita `--minimo`, `--fechamento` e `--obs`: a observação é refeita a cada chamada.
 Fatura com cartão adicional de outra pessoa: some por portador no PDF e lance a parte dela com `--outro-*`
 (o site mostra "sua parte" no destaque do mês e a parte dela separada).

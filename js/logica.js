@@ -257,3 +257,51 @@ export function disponivel(st, cartao) {
   const fechadas = st.lancamentos.filter(l => l.dados.cartaoId === cartao.id && !l.dados.pago);
   return centavos((Number(cartao.dados.limite) || 0) - (Number(cartao.dados.fatura) || 0) - soma(fechadas));
 }
+
+// ---------- agenda (.ics) ----------
+// Cada conta vira um evento de dia inteiro no vencimento, com lembrete 2 dias antes e no dia, às 9h.
+// UID fixo por lançamento: importar de novo atualiza o evento em vez de duplicar. Pagos viram "Pago: …" sem lembrete.
+
+const icsTexto = s => String(s ?? '').replace(/\\/g, '\\\\').replace(/;/g, '\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+/** Quebra linhas em até 75 bytes (RFC 5545), sem partir caractere acentuado */
+function icsDobra(linha) {
+  const partes = [];
+  let atual = '', bytes = 0;
+  for (const ch of linha) {
+    const n = new TextEncoder().encode(ch).length;
+    if (bytes + n > (partes.length ? 74 : 75)) { partes.push(atual); atual = ''; bytes = 0; }
+    atual += ch; bytes += n;
+  }
+  partes.push(atual);
+  return partes.join('\r\n ');
+}
+const icsData = s => s.replace(/-/g, '');
+const icsCarimbo = d => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+
+export function paraIcs(st, hoje, agora = new Date()) {
+  const desde = somaDias(hoje, -60);
+  const its = st.lancamentos.filter(l => l.dados.vencimento >= desde || !l.dados.pago)
+    .sort((a, b) => a.dados.vencimento.localeCompare(b.dados.vencimento));
+  const linhas = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Financeiro Breno//PT-BR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+    'X-WR-CALNAME:Financeiro', 'X-WR-TIMEZONE:America/Sao_Paulo'];
+  for (const l of its) {
+    const d = l.dados, receber = d.natureza === 'receber';
+    const valor = brl(d.valor) + (d.outroValor ? ' (sua parte ' + brl(parteMinha(l)) + ')' : '');
+    const titulo = (d.pago ? (receber ? 'Recebido: ' : 'Pago: ') : (receber ? 'Receber: ' : 'Pagar: ')) + (d.descricao || 'conta') + ' · ' + valor;
+    const desc = [
+      'Valor: ' + brl(d.valor),
+      d.outroValor ? 'Sua parte: ' + brl(parteMinha(l)) + ' · ' + d.outroNome + ': ' + brl(d.outroValor) : null,
+      d.obs || null,
+      d.codigo ? 'Código: ' + d.codigo : null,
+      'https://brenisio.github.io/financeiro/'
+    ].filter(Boolean).join('\n');
+    linhas.push('BEGIN:VEVENT', 'UID:' + l.id + '@financeiro-breno', 'DTSTAMP:' + icsCarimbo(agora),
+      'DTSTART;VALUE=DATE:' + icsData(d.vencimento), 'DTEND;VALUE=DATE:' + icsData(somaDias(d.vencimento, 1)),
+      'SUMMARY:' + icsTexto(titulo), 'DESCRIPTION:' + icsTexto(desc), 'TRANSP:TRANSPARENT');
+    if (!d.pago) for (const t of ['-P1DT15H', 'PT9H']) // 9h de 2 dias antes e 9h do dia
+      linhas.push('BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsTexto(titulo), 'TRIGGER:' + t, 'END:VALARM');
+    linhas.push('END:VEVENT');
+  }
+  linhas.push('END:VCALENDAR');
+  return linhas.map(icsDobra).join('\r\n') + '\r\n';
+}

@@ -2,7 +2,7 @@
 import {
   COLECOES, MES, FORMAS, TIPOS_CONTA, deIso, hojeIso, quando, pad, brl, parseValor, valorParaCampo,
   deBackup, paraBackup, contagem, backupPendente, vazio, adicionar, atualizar, remover, pagar, desfazer,
-  fecharFatura, resumo, porMes, somaMeses, doMes, mesInicial, parteMinha, disponivel, dias, ehData, mesDe
+  fecharFatura, resumo, porMes, somaMeses, doMes, mesInicial, parteMinha, disponivel, dias, ehData, mesDe, paraIcs
 } from './logica.js';
 
 const CHAVE = 'financeiro-breno.v1', CHAVE_META = 'financeiro-breno.meta';
@@ -456,12 +456,18 @@ function render() {
 
 // ---------- backup: baixar / abrir ----------
 
-function exportar() {
-  const agora = new Date();
-  const blob = new Blob([JSON.stringify(paraBackup(st, agora), null, 2) + '\n'], { type: 'application/json' });
-  const a = el('a', { href: URL.createObjectURL(blob), download: 'financeiro-backup.json' });
+function baixar(nome, texto, tipo) {
+  const a = el('a', { href: URL.createObjectURL(new Blob([texto], { type: tipo })), download: nome });
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+function baixarAgenda() {
+  baixar('financeiro-lembretes.ics', paraIcs(st, hojeIso()), 'text/calendar');
+  toast('Lembretes baixados. Importe no Google Agenda; importar de novo atualiza.');
+}
+function exportar() {
+  const agora = new Date();
+  baixar('financeiro-backup.json', JSON.stringify(paraBackup(st, agora), null, 2) + '\n', 'application/json');
   meta.exportadoEm = agora.toISOString();
   if (!meta.alteradoEm) meta.alteradoEm = meta.exportadoEm;
   gravarLocal(); renderBackup();
@@ -476,11 +482,15 @@ function abrirBackup(confirmacao) {
     : ['Os dados ficam só neste navegador', 'Baixe o backup e guarde no Drive para abrir em outro lugar.'];
   const btBaixar = el('button', { class: 'btn' + (pend || !meta.exportadoEm ? ' primario' : ''), type: 'button', onclick: () => { exportar(); fecharModal(); } }, 'Baixar backup');
   const btAbrir = el('button', { class: 'btn', type: 'button', onclick: () => $('arquivo').click() }, 'Abrir backup…');
-  const caixa = janela('div', 'Backup', {},
+  const caixa = janela('div', 'Backup e lembretes', {},
     el('p', { class: 'bk-status' }, el('b', {}, status[0]), status[1]),
     confirmacao || null,
     el('div', { class: 'rodape' }, btAbrir, btBaixar),
-    el('p', { class: 'bk-dica' }, 'Dica: também dá para arrastar o arquivo para a página.'));
+    el('p', { class: 'bk-dica' }, 'Dica: também dá para arrastar o arquivo para a página.'),
+    el('div', { class: 'lembretes' },
+      el('h3', {}, 'Lembretes no celular e no e-mail'),
+      el('p', { class: 'bk-dica' }, 'Baixe o arquivo e importe no Google Agenda (no computador: Configurações → Importar). Cada conta vira um evento no vencimento, com aviso 2 dias antes e no dia, às 9h. Importar de novo atualiza.'),
+      el('button', { class: 'btn', type: 'button', disabled: !st.lancamentos.length, onclick: () => { baixarAgenda(); fecharModal(); } }, 'Baixar lembretes (.ics)')));
   abrirModal(caixa, confirmacao ? confirmacao.querySelector('button') : btBaixar);
 }
 

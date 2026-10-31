@@ -240,3 +240,24 @@ test('mesInicial: próximo mês com conta em aberto; sem nada, o mês atual', ()
   const pagoTudo = estado({ lancamentos: [lanc('p', { descricao: 'P', valor: 1, vencimento: '2026-12-01', pago: true })] });
   assert.equal(mesInicial(pagoTudo, HOJE), '2026-10');
 });
+
+test('agenda .ics: abertos com lembrete, pagos sem, texto escapado e linhas curtas', async () => {
+  const { paraIcs } = await import('../../js/logica.js');
+  const st = deBackup({ lancamentos: [
+    { id: 'cx', descricao: 'Fatura Caixa', valor: 2924.13, vencimento: '2026-11-10', outroNome: 'Agatha', outroValor: 2048.92, codigo: '10498.18824 62002.134245 13104.001139 7 00000000000000', obs: 'mínimo R$ 438,62; fechou 30/10' },
+    { id: 'mei', descricao: 'MEI', valor: 75.6, vencimento: '2026-10-20', pago: true, pagoEm: '2026-10-19' },
+    { id: 'velho', descricao: 'Pago faz tempo', valor: 1, vencimento: '2026-01-10', pago: true }
+  ] });
+  const ics = paraIcs(st, HOJE, new Date('2026-10-31T13:00:00Z'));
+  assert.ok(ics.startsWith('BEGIN:VCALENDAR\r\n') && ics.endsWith('END:VCALENDAR\r\n'));
+  const eventos = ics.split('BEGIN:VEVENT').slice(1);
+  assert.equal(eventos.length, 2, 'pago há mais de 60 dias fica de fora');
+  const desdobrado = ics.replace(/\r\n /g, '');
+  assert.match(desdobrado, /UID:cx@financeiro-breno\r\nDTSTAMP:20261031T130000Z\r\nDTSTART;VALUE=DATE:20261110\r\nDTEND;VALUE=DATE:20261111/);
+  assert.match(desdobrado, /SUMMARY:Pagar: Fatura Caixa · R\$ 2\.924\\,13 \(sua parte R\$ 875\\,21\)/);
+  assert.match(desdobrado, /mínimo R\$ 438\\,62\; fechou 30\/10/);
+  assert.match(desdobrado, /SUMMARY:Pago: MEI/);
+  assert.equal((eventos[0].match(/BEGIN:VALARM/g) || []).length, 0, 'MEI pago: sem lembrete');
+  assert.equal((eventos[1].match(/BEGIN:VALARM/g) || []).length, 2);
+  for (const linha of ics.split('\r\n')) assert.ok(new TextEncoder().encode(linha).length <= 75, linha);
+});
