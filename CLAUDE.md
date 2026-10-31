@@ -35,8 +35,8 @@ python3 ferramentas/fin.py resumo [--mes 2026-11]
 ## Quando o Breno mandar uma fatura em PDF
 
 1. Copie o PDF para `dados/faturas/<cartao>-<AAAA-MM>.pdf`.
-2. Extraia o texto: `pdftotext -layout arquivo.pdf -`. Se o PDF tiver senha (comum em banco: dígitos do CPF), peça a senha
-   e use `pdftotext -upw <senha> ...`; nunca grave a senha em arquivo nem em memória. Se o texto vier vazio (PDF escaneado), leia o PDF com a tool Read.
+2. Extraia o texto: `pdftotext -layout arquivo.pdf -`. Se o PDF tiver senha, use a que está na memória privada do Claude
+   (`senha-faturas`, fora do repo) com `pdftotext -upw <senha> ...`; se não abrir, peça. Nunca grave a senha neste repo (é público). Se o texto vier vazio (PDF escaneado), leia o PDF com a tool Read.
 3. Pegue do PDF: nome do cartão/banco (use sempre o mesmo nome já cadastrado; veja com `resumo`), **total da fatura**,
    **vencimento**, fechamento, pagamento mínimo, limite total e a linha digitável, se houver.
    Cuidado: "total da fatura" ≠ "saldo anterior" ≠ "lançamentos do mês"; parcelas futuras não entram no total.
