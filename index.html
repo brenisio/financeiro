@@ -1,0 +1,594 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Financeiro Breno</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: faixa de resumo no topo; abaixo, coluna larga de vencimentos + coluna estreita de contas e cartões (empilha no celular) */
+:root {
+  --bg: #eef2f0; --surface: #ffffff; --ink: #15201c; --muted: #5b6a63; --line: #d8e0dc;
+  --accent: #1d6b58; --accent-ink: #ffffff; --soft: #e2ece8;
+  --danger: #b3372b; --warn: #9a6205; --good: #2a7a3c;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e1412; --surface: #161e1b; --ink: #e4ebe7; --muted: #93a29b; --line: #26312c;
+  --accent: #5cc0a3; --accent-ink: #0b1411; --soft: #1d2a25;
+  --danger: #ef7f70; --warn: #e2a640; --good: #70c98a; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0e1412; --surface: #161e1b; --ink: #e4ebe7; --muted: #93a29b; --line: #26312c;
+  --accent: #5cc0a3; --accent-ink: #0b1411; --soft: #1d2a25;
+  --danger: #ef7f70; --warn: #e2a640; --good: #70c98a; color-scheme: dark }
+
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.45; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 24px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 20px; }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+button { font: inherit; cursor: pointer; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; }
+header h1 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
+header p { margin: 2px 0 0; color: var(--muted); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn { border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 8px 14px; border-radius: 8px; font-weight: 500; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.danger { color: var(--danger); }
+.btn.small { padding: 4px 10px; font-size: 13px; }
+
+.status { font-size: 13px; color: var(--muted); }
+.status.erro { color: var(--danger); }
+.backup { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.backup.pendente { border-color: var(--warn); }
+.backup.pendente .status { color: var(--warn); font-weight: 500; }
+.confirma { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; font-size: 14px; }
+
+.resumo { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.resumo > div { background: var(--surface); padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.resumo .rot { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.resumo .val { font-size: 22px; font-weight: 600; }
+.resumo .sub { font-size: 12px; color: var(--muted); }
+.neg { color: var(--danger); } .pos { color: var(--good); }
+
+.grade { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+section h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.grupo { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+.grupo-tit { font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; gap: 8px; padding: 0 2px; }
+.grupo-tit .num { color: var(--muted); font-weight: 500; }
+.grupo.atrasado .grupo-tit { color: var(--danger); }
+
+.item { display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; gap: 12px; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.item.atrasado { border-left: 3px solid var(--danger); }
+.item.hoje { border-left: 3px solid var(--warn); }
+.data { text-align: center; line-height: 1.1; }
+.data b { display: block; font-family: var(--mono); font-size: 18px; }
+.data span { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.desc { min-width: 0; }
+.desc .t { font-weight: 600; overflow-wrap: anywhere; }
+.desc .m { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.pill { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--soft); color: var(--ink); }
+.pill.red { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
+.pill.amber { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.dir { display: flex; flex-direction: column; align-items: end; gap: 6px; }
+.dir .valor { font-weight: 600; }
+.dir .bts { display: flex; gap: 4px; flex-wrap: wrap; justify-content: end; }
+
+.vazio { background: var(--surface); border: 1px dashed var(--line); border-radius: 10px; padding: 18px; color: var(--muted); }
+.vazio b { color: var(--ink); }
+
+.lado { display: flex; flex-direction: column; gap: 20px; }
+.lista { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.linha { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 10px 12px; border-top: 1px solid var(--line); align-items: center; }
+.linha:first-child { border-top: 0; }
+.linha .t { font-weight: 600; overflow-wrap: anywhere; }
+.linha .m { font-size: 12px; color: var(--muted); grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.linha .acoes { grid-column: 1 / -1; display: flex; gap: 4px; flex-wrap: wrap; }
+.barra { grid-column: 1 / -1; height: 5px; border-radius: 3px; background: var(--soft); overflow: hidden; }
+.barra i { display: block; height: 100%; background: var(--accent); }
+.barra i.alto { background: var(--danger); }
+
+details.pagos { margin-top: 6px; }
+details.pagos summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 4px 2px; }
+details.pagos .item { opacity: 0.75; }
+
+.modal-fundo { position: fixed; inset: 0; background: color-mix(in srgb, var(--ink) 40%, transparent); display: flex; align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto; z-index: 20; }
+.modal { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; width: 100%; max-width: 460px; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+.modal h3 { margin: 0; font-size: 18px; }
+.campo { display: flex; flex-direction: column; gap: 4px; }
+.campo label { font-size: 12px; color: var(--muted); font-weight: 500; }
+.campo input, .campo select, .campo textarea { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); min-width: 0; }
+.campo textarea { min-height: 60px; resize: vertical; font-family: var(--mono); font-size: 13px; }
+.duas { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.modal .rodape { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.modal .msg { font-size: 13px; color: var(--danger); min-height: 1em; }
+
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(20px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 14px; z-index: 30; }
+
+@media (max-width: 860px) {
+  .grade { grid-template-columns: minmax(0, 1fr); }
+  .resumo { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 440px) {
+  .item { grid-template-columns: 46px minmax(0, 1fr); }
+  .dir { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; align-items: center; }
+  .resumo .val { font-size: 18px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Financeiro Breno</h1>
+      <p id="hoje">Contas, boletos e cartões</p>
+    </div>
+    <div class="actions">
+      <button class="btn primary" id="bt-novo" type="button">+ Conta a pagar</button>
+      <button class="btn" id="bt-receber" type="button">+ A receber</button>
+    </div>
+  </header>
+  <div class="backup" id="backup">
+    <span class="status" id="status">Os dados ficam só neste navegador. Exporte o backup e guarde no Drive.</span>
+    <div class="actions">
+      <button class="btn small" id="bt-importar" type="button">Importar backup</button>
+      <button class="btn small primary" id="bt-exportar" type="button">Exportar backup</button>
+      <input type="file" id="arquivo" accept=".json,application/json" hidden>
+    </div>
+    <div class="confirma" id="confirma" hidden></div>
+  </div>
+
+  <div class="resumo" id="resumo">
+    <div><span class="rot">Em conta</span><span class="val num" id="r-saldo">—</span><span class="sub" id="r-saldo-sub">corrente, poupança e carteira</span></div>
+    <div><span class="rot">A pagar em 30 dias</span><span class="val num" id="r-pagar">—</span><span class="sub" id="r-pagar-sub">inclui atrasados</span></div>
+    <div><span class="rot">Atrasado</span><span class="val num" id="r-atraso">—</span><span class="sub" id="r-atraso-sub">nada vencido</span></div>
+    <div><span class="rot">Sobra projetada</span><span class="val num" id="r-sobra">—</span><span class="sub">saldo + a receber − a pagar (30 dias)</span></div>
+  </div>
+
+  <div class="grade">
+    <section>
+      <h2>Vencimentos</h2>
+      <div id="vencimentos">
+        <div class="vazio">Nenhum vencimento cadastrado ainda. Clique em <b>+ Conta a pagar</b> ou importe seu backup.</div>
+      </div>
+      <details class="pagos" id="pagos-box" hidden>
+        <summary id="pagos-tit">Pagos nos últimos 30 dias</summary>
+        <div class="grupo" id="pagos" style="margin-top:8px"></div>
+      </details>
+    </section>
+
+    <aside class="lado">
+      <section>
+        <h2>Contas bancárias <button class="btn small" id="bt-conta" type="button">+ Conta</button></h2>
+        <div class="lista" id="contas"><div class="linha"><span class="m">Cadastre suas contas e o saldo que aparece no app do banco.</span></div></div>
+      </section>
+      <section>
+        <h2>Cartões <button class="btn small" id="bt-cartao" type="button">+ Cartão</button></h2>
+        <div class="lista" id="cartoes"><div class="linha"><span class="m">Cadastre cartões com limite, fatura em aberto e dias de fechamento e vencimento.</span></div></div>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<div id="modal-raiz"></div>
+
+<script>
+(function () {
+  const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+  const MES = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+  const $ = id => document.getElementById(id);
+  const brl = v => BRL.format(Number(v) || 0);
+
+  // ---- datas (sempre locais, formato AAAA-MM-DD) ----
+  const pad = n => String(n).padStart(2, '0');
+  const iso = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const deIso = s => { const [y, m, d] = String(s).split('-').map(Number); return new Date(y, m - 1, d); };
+  const hojeIso = () => iso(new Date());
+  const dias = (a, b) => Math.round((deIso(b) - deIso(a)) / 86400000);
+  const somaDias = (s, n) => { const d = deIso(s); d.setDate(d.getDate() + n); return iso(d); };
+  function maisUmMes(s) {
+    const [y, m, d] = s.split('-').map(Number);
+    const ultimo = new Date(y, m + 1, 0).getDate();
+    return iso(new Date(y, m, Math.min(d, ultimo)));
+  }
+  function proximoDia(dia) {
+    const h = new Date(); const y = h.getFullYear(), m = h.getMonth();
+    const clamp = (yy, mm) => new Date(yy, mm, Math.min(dia, new Date(yy, mm + 1, 0).getDate()));
+    let d = clamp(y, m);
+    if (iso(d) < hojeIso()) d = clamp(y, m + 1);
+    return iso(d);
+  }
+  function quando(s) {
+    const n = dias(hojeIso(), s);
+    if (n === 0) return 'hoje';
+    if (n === 1) return 'amanhã';
+    if (n === -1) return 'ontem';
+    return n < 0 ? 'há ' + (-n) + ' dias' : 'em ' + n + ' dias';
+  }
+  function parseValor(txt) {
+    let s = String(txt || '').replace(/[R$\s]/g, '');
+    if (!s) return NaN;
+    if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+    return Number(s);
+  }
+  function el(tag, attrs, ...filhos) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (k === 'class') e.className = v;
+      else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+      else if (v != null) e.setAttribute(k, v);
+    }
+    for (const f of filhos.flat()) if (f != null && f !== false) e.append(f.nodeType ? f : String(f));
+    return e;
+  }
+  let toastT;
+  function toast(msg) {
+    document.querySelectorAll('.toast').forEach(t => t.remove());
+    const t = el('div', { class: 'toast', role: 'status' }, msg);
+    document.body.append(t);
+    clearTimeout(toastT); toastT = setTimeout(() => t.remove(), 2600);
+  }
+
+  $('hoje').textContent = new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+  // ---- estado ----
+  // Os dados vivem no localStorage deste navegador; o backup .json é a cópia que vai pro Drive.
+  const COLECOES = ['lancamentos', 'contas', 'cartoes'];
+  const CHAVE = 'financeiro-breno.v1', CHAVE_META = 'financeiro-breno.meta';
+  const st = { lancamentos: [], contas: [], cartoes: [] };
+  let meta = { alteradoEm: null, exportadoEm: null };
+  const novoId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+  function paraJson() {
+    const out = { versao: 1, salvoEm: new Date().toISOString() };
+    for (const n of COLECOES) out[n] = st[n].map(i => Object.assign({ id: i.id }, i.dados));
+    return out;
+  }
+  function deJson(obj) {
+    if (!obj || typeof obj !== 'object' || !COLECOES.some(n => Array.isArray(obj[n]))) throw new Error('Arquivo não parece um backup do Financeiro.');
+    for (const n of COLECOES) st[n] = (Array.isArray(obj[n]) ? obj[n] : []).map(({ id, ...dados }) => ({ id: id || novoId(), dados }));
+  }
+  function gravarLocal() {
+    try {
+      localStorage.setItem(CHAVE, JSON.stringify(paraJson()));
+      localStorage.setItem(CHAVE_META, JSON.stringify(meta));
+      return true;
+    } catch { return false; }
+  }
+  function salvar() {
+    meta.alteradoEm = new Date().toISOString();
+    if (!gravarLocal()) toast('O navegador bloqueou o armazenamento. Exporte o backup antes de fechar.');
+    render();
+  }
+  try {
+    const bruto = localStorage.getItem(CHAVE);
+    if (bruto) deJson(JSON.parse(bruto));
+    meta = Object.assign(meta, JSON.parse(localStorage.getItem(CHAVE_META) || '{}'));
+  } catch { /* começa vazio */ }
+
+  // Mesma interface que o resto da página usa: collection(n).add / doc(id).update / doc(id).delete
+  const db = { collection: nome => ({
+    add: async dados => { st[nome].push({ id: novoId(), dados }); salvar(); },
+    doc: id => ({
+      update: async dados => { const x = st[nome].find(i => i.id === id); if (x) { x.dados = Object.assign({}, x.dados, dados); salvar(); } },
+      delete: async () => { st[nome] = st[nome].filter(i => i.id !== id); salvar(); }
+    })
+  }) };
+
+  // ---- formulários ----
+  const FORMAS = [['boleto', 'Boleto'], ['pix', 'Pix'], ['debito', 'Débito automático'], ['fatura', 'Fatura de cartão'], ['transferencia', 'Transferência'], ['outro', 'Outro']];
+  const ESPECS = {
+    lancamentos: { nome: 'lançamento', campos: [
+      { k: 'descricao', l: 'Descrição', t: 'text', req: 1, ph: 'Ex.: Conta de luz' },
+      { k: 'valor', l: 'Valor (R$)', t: 'money', req: 1, ph: '182,40' },
+      { k: 'vencimento', l: 'Vencimento', t: 'date', req: 1 },
+      { k: 'natureza', l: 'Tipo', t: 'select', o: [['pagar', 'A pagar'], ['receber', 'A receber']] },
+      { k: 'forma', l: 'Forma', t: 'select', o: FORMAS },
+      { k: 'recorrencia', l: 'Repete', t: 'select', o: [['', 'Não repete'], ['mensal', 'Todo mês']] },
+      { k: 'categoria', l: 'Categoria', t: 'text', ph: 'Moradia, saúde, assinatura…' },
+      { k: 'codigo', l: 'Linha digitável ou Pix copia e cola', t: 'textarea' },
+      { k: 'obs', l: 'Observação', t: 'textarea' }
+    ] },
+    contas: { nome: 'conta', campos: [
+      { k: 'nome', l: 'Banco / conta', t: 'text', req: 1, ph: 'Ex.: Nubank, Itaú corrente' },
+      { k: 'tipo', l: 'Tipo', t: 'select', o: [['corrente', 'Conta corrente'], ['poupanca', 'Poupança'], ['carteira', 'Dinheiro / carteira'], ['investimento', 'Investimento']] },
+      { k: 'saldo', l: 'Saldo atual (R$)', t: 'money', req: 1, ph: '2.350,00' }
+    ] },
+    cartoes: { nome: 'cartão', campos: [
+      { k: 'nome', l: 'Cartão', t: 'text', req: 1, ph: 'Ex.: Nubank Mastercard' },
+      { k: 'limite', l: 'Limite total (R$)', t: 'money' },
+      { k: 'fatura', l: 'Fatura em aberto (R$)', t: 'money', ph: '0,00' },
+      { k: 'diaFechamento', l: 'Dia do fechamento', t: 'number' },
+      { k: 'diaVencimento', l: 'Dia do vencimento', t: 'number', req: 1 }
+    ] }
+  };
+
+  function abrirForm(colecao, doc, padrao) {
+    const espec = ESPECS[colecao];
+    const dados = Object.assign({}, padrao || {}, doc ? doc.dados : {});
+    const raiz = $('modal-raiz');
+    const fechar = () => { raiz.innerHTML = ''; document.removeEventListener('keydown', esc); };
+    const esc = e => { if (e.key === 'Escape') fechar(); };
+    document.addEventListener('keydown', esc);
+    const msg = el('div', { class: 'msg' });
+    const inputs = {};
+    const campos = espec.campos.map(c => {
+      const id = 'f-' + colecao + '-' + c.k;
+      let inp;
+      if (c.t === 'select') {
+        inp = el('select', { id }, c.o.map(([v, l]) => el('option', { value: v }, l)));
+        inp.value = dados[c.k] ?? c.o[0][0];
+      } else if (c.t === 'textarea') {
+        inp = el('textarea', { id, placeholder: c.ph });
+        inp.value = dados[c.k] || '';
+      } else {
+        const tipo = c.t === 'money' ? 'text' : c.t;
+        inp = el('input', { id, type: tipo, placeholder: c.ph, inputmode: c.t === 'money' ? 'decimal' : (c.t === 'number' ? 'numeric' : null), min: c.t === 'number' ? '1' : null, max: c.t === 'number' ? '31' : null });
+        const v = dados[c.k];
+        inp.value = v == null ? '' : (c.t === 'money' ? String(v).replace('.', ',') : v);
+      }
+      inputs[c.k] = inp;
+      return el('div', { class: 'campo' }, el('label', { for: id }, c.l + (c.req ? '' : ' (opcional)')), inp);
+    });
+
+    let confirmando = false;
+    const btExcluir = doc ? el('button', { class: 'btn danger', type: 'button', onclick: async () => {
+      if (!confirmando) { confirmando = true; btExcluir.textContent = 'Confirmar exclusão'; return; }
+      try { await db.collection(colecao).doc(doc.id).delete(); fechar(); toast('Excluído'); }
+      catch (e) { msg.textContent = 'Não consegui excluir: ' + (e.message || e.code); }
+    } }, 'Excluir') : el('span');
+
+    const form = el('form', { class: 'modal', onsubmit: async e => {
+      e.preventDefault();
+      const out = {};
+      for (const c of espec.campos) {
+        const raw = inputs[c.k].value.trim();
+        if (c.req && !raw) { msg.textContent = 'Preencha “' + c.l + '”.'; inputs[c.k].focus(); return; }
+        if (c.t === 'money') {
+          if (!raw) { out[c.k] = 0; continue; }
+          const n = parseValor(raw);
+          if (!isFinite(n)) { msg.textContent = '“' + c.l + '” precisa ser um valor, como 182,40.'; inputs[c.k].focus(); return; }
+          out[c.k] = Math.round(n * 100) / 100;
+        } else if (c.t === 'number') {
+          out[c.k] = raw ? Math.min(31, Math.max(1, parseInt(raw, 10))) : null;
+        } else out[c.k] = raw;
+      }
+      if (colecao !== 'lancamentos') out.atualizadoEm = hojeIso();
+      else if (!doc) out.pago = false;
+      try {
+        if (doc) await db.collection(colecao).doc(doc.id).update(out);
+        else await db.collection(colecao).add(out);
+        fechar(); toast('Salvo');
+      } catch (err) { msg.textContent = 'Não consegui salvar: ' + (err.message || err.code); }
+    } },
+      el('h3', {}, (doc ? 'Editar ' : 'Novo ') + espec.nome),
+      campos, msg,
+      el('div', { class: 'rodape' }, btExcluir,
+        el('div', { class: 'actions' },
+          el('button', { class: 'btn', type: 'button', onclick: fechar }, 'Cancelar'),
+          el('button', { class: 'btn primary', type: 'submit' }, 'Salvar')))
+    );
+    raiz.innerHTML = '';
+    raiz.append(el('div', { class: 'modal-fundo', onclick: e => { if (e.target === e.currentTarget) fechar(); } }, form));
+    (inputs[espec.campos[0].k]).focus();
+  }
+
+  $('bt-novo').onclick = () => abrirForm('lancamentos', null, { natureza: 'pagar', forma: 'boleto', vencimento: hojeIso() });
+  $('bt-receber').onclick = () => abrirForm('lancamentos', null, { natureza: 'receber', forma: 'pix', vencimento: hojeIso() });
+  $('bt-conta').onclick = () => abrirForm('contas');
+  $('bt-cartao').onclick = () => abrirForm('cartoes');
+
+  // ---- ações ----
+  async function marcarPago(l) {
+    try {
+      await db.collection('lancamentos').doc(l.id).update({ pago: true, pagoEm: hojeIso() });
+      if (l.dados.recorrencia === 'mensal' && !st.lancamentos.some(x => x.dados.origem === l.id)) {
+        const prox = Object.assign({}, l.dados, { vencimento: maisUmMes(l.dados.vencimento), pago: false, origem: l.id, codigo: '' });
+        delete prox.pagoEm;
+        await db.collection('lancamentos').add(prox);
+        toast('Pago. Próximo criado para ' + deIso(prox.vencimento).toLocaleDateString('pt-BR'));
+      } else toast(l.dados.natureza === 'receber' ? 'Marcado como recebido' : 'Marcado como pago');
+    } catch (e) { toast('Não consegui salvar: ' + (e.message || e.code)); }
+  }
+  async function desfazerPago(l) {
+    try { await db.collection('lancamentos').doc(l.id).update({ pago: false, pagoEm: null }); toast('Voltou para a lista'); }
+    catch (e) { toast('Não consegui salvar: ' + (e.message || e.code)); }
+  }
+  async function copiar(txt) {
+    try { await navigator.clipboard.writeText(txt); toast('Código copiado'); }
+    catch { toast('Não deu para copiar; abra “Editar” e copie do campo.'); }
+  }
+  async function fecharFatura(c) {
+    const valor = Number(c.dados.fatura) || 0;
+    if (!valor) { toast('A fatura em aberto está zerada.'); return; }
+    try {
+      await db.collection('lancamentos').add({ descricao: 'Fatura ' + c.dados.nome, valor, vencimento: proximoDia(c.dados.diaVencimento || 10), natureza: 'pagar', forma: 'fatura', categoria: 'Cartão', recorrencia: '', pago: false, cartaoId: c.id });
+      await db.collection('cartoes').doc(c.id).update({ fatura: 0, atualizadoEm: hojeIso() });
+      toast('Fatura lançada nos vencimentos');
+    } catch (e) { toast('Não consegui salvar: ' + (e.message || e.code)); }
+  }
+
+  // ---- render ----
+  function itemLanc(l, pago) {
+    const d = l.dados, h = hojeIso();
+    const n = dias(h, d.vencimento);
+    const receber = d.natureza === 'receber';
+    const classe = 'item' + (!pago && n < 0 ? ' atrasado' : '') + (!pago && n >= 0 && n <= 2 ? ' hoje' : '');
+    const dt = deIso(d.vencimento);
+    const meta = [
+      receber ? el('span', { class: 'pill' }, 'a receber') : null,
+      d.forma ? el('span', {}, (FORMAS.find(f => f[0] === d.forma) || [, d.forma])[1]) : null,
+      d.categoria ? el('span', {}, d.categoria) : null,
+      d.recorrencia === 'mensal' ? el('span', {}, 'todo mês') : null,
+      pago ? el('span', {}, 'pago em ' + deIso(d.pagoEm || h).toLocaleDateString('pt-BR')) :
+        el('span', { class: n < 0 ? 'pill red' : (n <= 2 ? 'pill amber' : '') }, (n < 0 ? 'venceu ' : 'vence ') + quando(d.vencimento)),
+      d.obs ? el('span', {}, d.obs) : null
+    ];
+    const bts = pago
+      ? [el('button', { class: 'btn small', type: 'button', onclick: () => desfazerPago(l) }, 'Desfazer')]
+      : [
+          d.codigo ? el('button', { class: 'btn small', type: 'button', onclick: () => copiar(d.codigo) }, 'Copiar código') : null,
+          el('button', { class: 'btn small', type: 'button', onclick: () => abrirForm('lancamentos', l) }, 'Editar'),
+          el('button', { class: 'btn small primary', type: 'button', onclick: () => marcarPago(l) }, receber ? 'Recebi' : 'Paguei')
+        ];
+    return el('div', { class: classe },
+      el('div', { class: 'data' }, el('b', {}, pad(dt.getDate())), el('span', {}, MES[dt.getMonth()])),
+      el('div', { class: 'desc' }, el('div', { class: 't' }, d.descricao || '(sem descrição)'), el('div', { class: 'm' }, meta)),
+      el('div', { class: 'dir' }, el('span', { class: 'valor num' + (receber ? ' pos' : '') }, (receber ? '+ ' : '') + brl(d.valor)), el('div', { class: 'bts' }, bts))
+    );
+  }
+
+  function render() {
+    const h = hojeIso(), lim30 = somaDias(h, 30);
+    const abertos = st.lancamentos.filter(l => !l.dados.pago && l.dados.vencimento).sort((a, b) => a.dados.vencimento.localeCompare(b.dados.vencimento));
+    const pagar = abertos.filter(l => l.dados.natureza !== 'receber');
+    const receber = abertos.filter(l => l.dados.natureza === 'receber');
+    const soma = arr => arr.reduce((s, l) => s + (Number(l.dados.valor) || 0), 0);
+
+    // resumo
+    const liquidas = st.contas.filter(c => c.dados.tipo !== 'investimento');
+    const invest = st.contas.filter(c => c.dados.tipo === 'investimento');
+    const saldo = liquidas.reduce((s, c) => s + (Number(c.dados.saldo) || 0), 0);
+    const atrasados = pagar.filter(l => l.dados.vencimento < h);
+    const pagar30 = soma(pagar.filter(l => l.dados.vencimento <= lim30));
+    const receber30 = soma(receber.filter(l => l.dados.vencimento <= lim30));
+    const sobra = saldo + receber30 - pagar30;
+    $('r-saldo').textContent = st.contas.length ? brl(saldo) : '—';
+    $('r-saldo-sub').textContent = invest.length ? '+ ' + brl(invest.reduce((s, c) => s + (Number(c.dados.saldo) || 0), 0)) + ' investidos' : 'corrente, poupança e carteira';
+    $('r-pagar').textContent = brl(pagar30);
+    $('r-pagar-sub').textContent = pagar.filter(l => l.dados.vencimento <= lim30).length + ' contas, inclui atrasadas';
+    $('r-atraso').textContent = brl(soma(atrasados));
+    $('r-atraso').className = 'val num' + (atrasados.length ? ' neg' : '');
+    $('r-atraso-sub').textContent = atrasados.length ? atrasados.length + (atrasados.length > 1 ? ' contas vencidas' : ' conta vencida') : 'nada vencido';
+    $('r-sobra').textContent = brl(sobra);
+    $('r-sobra').className = 'val num ' + (sobra < 0 ? 'neg' : 'pos');
+
+    // vencimentos agrupados
+    const box = $('vencimentos'); box.innerHTML = '';
+    if (!abertos.length) {
+      box.append(el('div', { class: 'vazio' }, st.lancamentos.length ? 'Tudo pago. Nenhum vencimento em aberto.' : el('span', {}, 'Nenhum vencimento cadastrado ainda. Clique em ', el('b', {}, '+ Conta a pagar'), ' ou importe seu backup.')));
+    } else {
+      const g7 = somaDias(h, 7);
+      const grupos = [
+        ['Atrasadas', 'atrasado', l => l.dados.vencimento < h],
+        ['Próximos 7 dias', '', l => l.dados.vencimento >= h && l.dados.vencimento <= g7],
+        ['Até 30 dias', '', l => l.dados.vencimento > g7 && l.dados.vencimento <= lim30],
+        ['Mais adiante', '', l => l.dados.vencimento > lim30]
+      ];
+      for (const [tit, cls, f] of grupos) {
+        const its = abertos.filter(f);
+        if (!its.length) continue;
+        const tot = soma(its.filter(l => l.dados.natureza !== 'receber'));
+        box.append(el('div', { class: 'grupo ' + cls },
+          el('div', { class: 'grupo-tit' }, el('span', {}, tit), el('span', { class: 'num' }, tot ? brl(tot) + ' a pagar' : '')),
+          its.map(l => itemLanc(l, false))));
+      }
+    }
+
+    const pagos = st.lancamentos.filter(l => l.dados.pago && (l.dados.pagoEm || '') >= somaDias(h, -30)).sort((a, b) => (b.dados.pagoEm || '').localeCompare(a.dados.pagoEm || ''));
+    $('pagos-box').hidden = !pagos.length;
+    $('pagos-tit').textContent = 'Pagos nos últimos 30 dias (' + pagos.length + ')';
+    $('pagos').innerHTML = ''; $('pagos').append(...pagos.map(l => itemLanc(l, true)));
+
+    // contas
+    const velho = d => d && dias(d, h) > 7;
+    const cBox = $('contas'); cBox.innerHTML = '';
+    if (!st.contas.length) cBox.append(el('div', { class: 'linha' }, el('span', { class: 'm' }, 'Cadastre suas contas e o saldo que aparece no app do banco.')));
+    const TIPOS = { corrente: 'corrente', poupanca: 'poupança', carteira: 'carteira', investimento: 'investimento' };
+    for (const c of [...st.contas].sort((a, b) => (a.dados.nome || '').localeCompare(b.dados.nome || ''))) {
+      const d = c.dados;
+      cBox.append(el('div', { class: 'linha' },
+        el('span', { class: 't' }, d.nome),
+        el('span', { class: 'num' + (Number(d.saldo) < 0 ? ' neg' : '') }, brl(d.saldo)),
+        el('div', { class: 'm' }, el('span', {}, TIPOS[d.tipo] || d.tipo || ''),
+          d.atualizadoEm ? el('span', { class: velho(d.atualizadoEm) ? 'pill amber' : '' }, 'atualizado ' + quando(d.atualizadoEm)) : null,
+          el('button', { class: 'btn small', type: 'button', onclick: () => abrirForm('contas', c) }, 'Atualizar saldo'))
+      ));
+    }
+
+    // cartões
+    const kBox = $('cartoes'); kBox.innerHTML = '';
+    if (!st.cartoes.length) kBox.append(el('div', { class: 'linha' }, el('span', { class: 'm' }, 'Cadastre cartões com limite, fatura em aberto e dias de fechamento e vencimento.')));
+    for (const c of [...st.cartoes].sort((a, b) => (a.dados.nome || '').localeCompare(b.dados.nome || ''))) {
+      const d = c.dados, lim = Number(d.limite) || 0, fat = Number(d.fatura) || 0;
+      const uso = lim ? Math.min(100, Math.round(fat / lim * 100)) : 0;
+      const venc = d.diaVencimento ? proximoDia(d.diaVencimento) : null;
+      kBox.append(el('div', { class: 'linha' },
+        el('span', { class: 't' }, d.nome),
+        el('span', { class: 'num' }, brl(fat)),
+        lim ? el('div', { class: 'barra', title: uso + '% do limite' }, el('i', { class: uso >= 80 ? 'alto' : '', style: 'width:' + uso + '%' })) : null,
+        el('div', { class: 'm' },
+          lim ? el('span', {}, 'disponível ' + brl(lim - fat)) : null,
+          d.diaFechamento ? el('span', {}, 'fecha dia ' + d.diaFechamento) : null,
+          venc ? el('span', {}, 'vence ' + deIso(venc).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' (' + quando(venc) + ')') : null,
+          d.atualizadoEm ? el('span', { class: velho(d.atualizadoEm) ? 'pill amber' : '' }, 'atualizado ' + quando(d.atualizadoEm)) : null),
+        el('div', { class: 'acoes' },
+          el('button', { class: 'btn small', type: 'button', onclick: () => abrirForm('cartoes', c) }, 'Atualizar fatura'),
+          fat ? el('button', { class: 'btn small', type: 'button', onclick: () => fecharFatura(c) }, 'Fatura fechou: lançar') : null)
+      ));
+    }
+  }
+  // ---- backup ----
+  const fmtData = s => new Date(s).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  function renderBackup() {
+    const pendente = meta.alteradoEm && (!meta.exportadoEm || meta.alteradoEm > meta.exportadoEm);
+    $('backup').className = 'backup' + (pendente ? ' pendente' : '');
+    $('status').textContent = pendente
+      ? 'Há alterações que ainda não estão no backup. Exporte e substitua o arquivo no Drive.'
+      : meta.exportadoEm ? 'Backup em dia · exportado em ' + fmtData(meta.exportadoEm)
+      : 'Os dados ficam só neste navegador. Exporte o backup e guarde no Drive.';
+  }
+  const renderBase = render;
+  render = function () { renderBase(); renderBackup(); };
+
+  $('bt-exportar').onclick = () => {
+    const blob = new Blob([JSON.stringify(paraJson(), null, 2)], { type: 'application/json' });
+    const a = el('a', { href: URL.createObjectURL(blob), download: 'financeiro-backup.json' });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    meta.exportadoEm = new Date().toISOString();
+    gravarLocal(); renderBackup();
+    toast('Backup baixado. Suba no Drive substituindo o anterior.');
+  };
+
+  $('bt-importar').onclick = () => $('arquivo').click();
+  $('arquivo').onchange = async e => {
+    const f = e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    let obj;
+    try { obj = JSON.parse(await f.text()); if (!COLECOES.some(n => Array.isArray(obj[n]))) throw 0; }
+    catch { toast('Esse arquivo não é um backup válido do Financeiro.'); return; }
+    const conta = n => (Array.isArray(obj[n]) ? obj[n].length : 0);
+    const temDados = COLECOES.some(n => st[n].length);
+    const aplicar = () => {
+      deJson(obj);
+      meta = { alteradoEm: obj.salvoEm || new Date().toISOString(), exportadoEm: obj.salvoEm || new Date().toISOString() };
+      gravarLocal(); render(); $('confirma').hidden = true;
+      toast('Backup importado');
+    };
+    if (!temDados) { aplicar(); return; }
+    const box = $('confirma'); box.innerHTML = '';
+    box.append(
+      el('span', {}, 'Substituir os dados deste navegador pelo backup' + (obj.salvoEm ? ' de ' + fmtData(obj.salvoEm) : '') + ' (' + conta('lancamentos') + ' lançamentos, ' + conta('contas') + ' contas, ' + conta('cartoes') + ' cartões)?'),
+      el('button', { class: 'btn small primary', type: 'button', onclick: aplicar }, 'Substituir'),
+      el('button', { class: 'btn small', type: 'button', onclick: () => { box.hidden = true; } }, 'Cancelar'));
+    box.hidden = false;
+  };
+
+  window.addEventListener('beforeunload', e => {
+    if (meta.alteradoEm && (!meta.exportadoEm || meta.alteradoEm > meta.exportadoEm)) { e.preventDefault(); e.returnValue = ''; }
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>

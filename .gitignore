@@ -1,0 +1,3 @@
+# Dados financeiros NUNCA vão pro repo (GitHub Pages é público)
+*.json
+dados/
