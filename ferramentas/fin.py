@@ -143,6 +143,25 @@ def achar(lista, nome):
     return next((x for x in lista if norm(x.get('nome')) == alvo), None)
 
 
+def aplicar_outro(novo, a):
+    """--outro-nome/--outro-valor: parte do boleto que é de outra pessoa (ex.: cartão adicional da Agatha)."""
+    if getattr(a, 'outro_valor', None) is None:
+        if getattr(a, 'outro_nome', None):
+            raise Erro('Informe também --outro-valor.')
+        return
+    v = valor(a.outro_valor)
+    if v > novo['valor']:
+        raise Erro('A parte de outra pessoa não pode passar do valor total.')
+    if v and not (a.outro_nome or '').strip():
+        raise Erro('Informe de quem é a parte com --outro-nome.')
+    novo['outroValor'] = v
+    novo['outroNome'] = (a.outro_nome or '').strip() if v else ''
+
+
+def parte_minha(x):
+    return round((x.get('valor') or 0) - (x.get('outroValor') or 0), 2)
+
+
 # ---------- comandos ----------
 
 def cmd_cartao(d, a, quieto=False):
@@ -189,7 +208,10 @@ def cmd_fatura(d, a):
             'cartaoId': c['id'], 'obs': ' · '.join(x for x in obs if x)}
     if a.codigo:
         novo['codigo'] = a.codigo
+    aplicar_outro(novo, a)
     if l:
+        if 'outroValor' not in novo and (l.get('outroValor') or 0) > novo['valor']:
+            raise Erro('O valor novo é menor que a parte de outra pessoa já lançada; informe --outro-valor.')
         l.update(novo)
         print(f'Fatura {c["nome"]} de {venc[5:7]}/{venc[:4]} atualizada: {brl(novo["valor"])}, vence {venc}.')
     else:
@@ -209,7 +231,10 @@ def cmd_conta(d, a):
     if a.mensal:
         novo['recorrencia'] = 'mensal'
         novo['diaBase'] = int(venc[8:])
+    aplicar_outro(novo, a)
     if l:
+        if 'outroValor' not in novo and (l.get('outroValor') or 0) > novo['valor']:
+            raise Erro('O valor novo é menor que a parte de outra pessoa já lançada; informe --outro-valor.')
         l.update(novo)
         print(f'{a.descricao} de {venc[5:7]}/{venc[:4]} atualizada: {brl(novo["valor"])}, vence {venc}.')
     else:
@@ -292,11 +317,18 @@ def cmd_resumo(d, a):
         tot = lambda xs: sum(x['valor'] for x in xs)
         falta = tot(x for x in itens if not x.get('pago'))
         print(f'\n== {mes[5:]}/{mes[:4]} ==  total {brl(tot(itens))} · falta pagar {brl(falta)}')
+        outros = {}
+        for x in itens:
+            if x.get('outroValor'):
+                outros[x.get('outroNome') or 'outra pessoa'] = outros.get(x.get('outroNome') or 'outra pessoa', 0) + x['outroValor']
+        if outros:
+            print(f'  Sua parte: {brl(sum(parte_minha(x) for x in itens))}' + ''.join(f' · {n}: {brl(v)}' for n, v in outros.items()))
         for titulo, grupo in (('Faturas de cartão', fat), ('Contas', cts)):
             print(f'  {titulo}: {brl(tot(grupo))}')
             for x in grupo:
                 marca = 'pago' if x.get('pago') else 'aberto'
-                print(f'    {x["vencimento"][8:]}/{x["vencimento"][5:7]}  {x["descricao"]:<28} {brl(x["valor"]):>14}  {marca}')
+                parte = f'  (sua parte {brl(parte_minha(x))}, {x.get("outroNome")} {brl(x["outroValor"])})' if x.get('outroValor') else ''
+                print(f'    {x["vencimento"][8:]}/{x["vencimento"][5:7]}  {x["descricao"]:<28} {brl(x["valor"]):>14}  {marca}{parte}')
         receber = [x for x in d['lancamentos'] if x.get('natureza') == 'receber' and str(x.get('vencimento', ''))[:7] == mes]
         if receber:
             print(f'  A receber: {brl(tot(receber))}')
@@ -321,6 +353,8 @@ def main(argv=None):
     s.add_argument('--dia-fechamento', type=int)
     s.add_argument('--dia-vencimento', type=int)
     s.add_argument('--fatura-aberta', help='valor já gasto no ciclo seguinte, se o PDF mostrar')
+    s.add_argument('--outro-nome', help='de quem é a outra parte (ex.: Agatha)')
+    s.add_argument('--outro-valor', help='quanto do total é dessa pessoa')
 
     s = sub.add_parser('cartao', help='cadastra ou atualiza um cartão')
     s.add_argument('--cartao', required=True)
@@ -339,6 +373,8 @@ def main(argv=None):
     s.add_argument('--obs')
     s.add_argument('--mensal', action='store_true', help='repete todo mês')
     s.add_argument('--receber', action='store_true', help='é um valor a receber')
+    s.add_argument('--outro-nome', help='de quem é a outra parte')
+    s.add_argument('--outro-valor', help='quanto do total é dessa pessoa')
 
     s = sub.add_parser('saldo', help='atualiza o saldo de uma conta bancária')
     s.add_argument('--conta', required=True)

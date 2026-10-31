@@ -168,3 +168,35 @@ class TestComandos(Base):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ParteDeOutro(Base):
+    def test_fatura_com_parte_da_agatha_e_resumo(self):
+        self.ok('fatura', '--cartao', 'Caixa', '--valor', '2.924,13', '--vencimento', '10/11/2026',
+                '--outro-nome', 'Agatha', '--outro-valor', '2.048,92')
+        l = self.dados()['lancamentos'][0]
+        self.assertEqual((l['outroNome'], l['outroValor']), ('Agatha', 2048.92))
+        out = self.ok('resumo', '--mes', '2026-11')
+        self.assertIn('Sua parte: R$ 875,21', out)
+        self.assertIn('Agatha: R$ 2.048,92', out)
+
+    def test_atualizar_fatura_sem_informar_parte_mantem_a_parte(self):
+        self.ok('fatura', '--cartao', 'Caixa', '--valor', '100', '--vencimento', '10/11/2026', '--outro-nome', 'Agatha', '--outro-valor', '40')
+        self.ok('fatura', '--cartao', 'Caixa', '--valor', '120', '--vencimento', '10/11/2026')
+        l = self.dados()['lancamentos']
+        self.assertEqual(len(l), 1)
+        self.assertEqual((l[0]['valor'], l[0]['outroValor']), (120, 40))
+
+    def test_parte_invalida_nao_grava(self):
+        self.falha('conta', '--descricao', 'Luz', '--valor', '100', '--vencimento', '10/11/2026', '--outro-nome', 'Agatha', '--outro-valor', '150')
+        self.falha('conta', '--descricao', 'Luz', '--valor', '100', '--vencimento', '10/11/2026', '--outro-valor', '50')
+        self.falha('conta', '--descricao', 'Luz', '--valor', '100', '--vencimento', '10/11/2026', '--outro-nome', 'Agatha')
+        self.assertFalse(self.arq.exists())
+        self.ok('fatura', '--cartao', 'Caixa', '--valor', '100', '--vencimento', '10/11/2026', '--outro-nome', 'Agatha', '--outro-valor', '80')
+        self.falha('fatura', '--cartao', 'Caixa', '--valor', '50', '--vencimento', '10/11/2026')
+
+    def test_mensal_com_parte_repete_a_parte(self):
+        self.ok('conta', '--descricao', 'Internet', '--valor', '100', '--vencimento', '10/11/2026', '--mensal', '--outro-nome', 'Agatha', '--outro-valor', '50')
+        self.ok('pago', '--descricao', 'Internet', '--em', '09/11/2026')
+        prox = [x for x in self.dados()['lancamentos'] if not x['pago']][0]
+        self.assertEqual((prox['vencimento'], prox['outroValor'], prox['outroNome']), ('2026-12-10', 50, 'Agatha'))

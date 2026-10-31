@@ -89,6 +89,10 @@ export function deBackup(obj) {
         dados.valor = centavos(dados.valor);
         dados.natureza = dados.natureza === 'receber' ? 'receber' : 'pagar';
         dados.pago = dados.pago === true;
+        // parte de outra pessoa (ex.: cartão adicional): entre 0 e o valor total
+        const outro = Math.min(Math.max(centavos(dados.outroValor), 0), dados.valor);
+        if (outro) { dados.outroValor = outro; dados.outroNome = String(dados.outroNome || '').trim() || 'Outra pessoa'; }
+        else { delete dados.outroValor; delete dados.outroNome; }
       } else if (n === 'contas') dados.saldo = centavos(dados.saldo);
       else { dados.limite = centavos(dados.limite); dados.fatura = centavos(dados.fatura); }
       st[n].push({ id: chave, dados });
@@ -167,6 +171,9 @@ export function fecharFatura(st, cartaoId, hoje, idNovo = novoId()) {
 // ---------- leituras ----------
 
 const soma = arr => centavos(arr.reduce((s, l) => s + (Number(l.dados.valor) || 0), 0));
+/** Quanto do lançamento é seu (valor − parte de outra pessoa) */
+export const parteMinha = l => centavos((Number(l.dados.valor) || 0) - (Number(l.dados.outroValor) || 0));
+const somaMinha = arr => centavos(arr.reduce((s, l) => s + parteMinha(l), 0));
 const ehPagar = l => l.dados.natureza !== 'receber';
 export const abertos = st => st.lancamentos.filter(l => !l.dados.pago).sort((a, b) => a.dados.vencimento.localeCompare(b.dados.vencimento) || (a.dados.descricao || '').localeCompare(b.dados.descricao || ''));
 
@@ -208,17 +215,41 @@ export function pagosRecentes(st, hoje) {
     .sort((a, b) => (b.dados.pagoEm || '').localeCompare(a.dados.pagoEm || ''));
 }
 
-/** Soma por mês de vencimento: faturas × contas, pago × falta. Janela: mês passado até +3, mais meses com atraso. */
+/** Soma por mês de vencimento: faturas × contas, pago × falta, sua parte × de outros.
+ *  Janela: mês passado até +3, mais qualquer mês com conta em aberto (atrasada ou futura). */
 export function porMes(st, hoje) {
   const atual = mesDe(hoje);
   const janela = new Set([-1, 0, 1, 2, 3].map(n => mesDe(somaMeses(atual + '-01', n))));
-  abertos(st).filter(l => ehPagar(l) && l.dados.vencimento < hoje).forEach(l => janela.add(mesDe(l.dados.vencimento)));
+  abertos(st).filter(ehPagar).forEach(l => janela.add(mesDe(l.dados.vencimento)));
   return [...janela].sort().map(m => {
     const its = st.lancamentos.filter(l => ehPagar(l) && mesDe(l.dados.vencimento) === m);
     const faturas = soma(its.filter(l => l.dados.forma === 'fatura'));
     const total = soma(its), pago = soma(its.filter(l => l.dados.pago));
-    return { mes: m, atual: m === atual, faturas, contas: centavos(total - faturas), total, pago, falta: centavos(total - pago), n: its.length };
+    const abertosMes = its.filter(l => !l.dados.pago);
+    const outros = {};
+    for (const l of its) if (l.dados.outroValor) outros[l.dados.outroNome] = centavos((outros[l.dados.outroNome] || 0) + l.dados.outroValor);
+    const receber = st.lancamentos.filter(l => !ehPagar(l) && mesDe(l.dados.vencimento) === m);
+    return {
+      mes: m, atual: m === atual, faturas, contas: centavos(total - faturas), total, pago, falta: centavos(total - pago), n: its.length,
+      seu: somaMinha(its), faltaSeu: somaMinha(abertosMes), pagoSeu: somaMinha(its.filter(l => l.dados.pago)),
+      outros: Object.entries(outros).map(([nome, valor]) => ({ nome, valor })),
+      receber: soma(receber), nAbertos: abertosMes.length, atrasado: abertosMes.some(l => l.dados.vencimento < hoje)
+    };
   }).filter(r => r.n);
+}
+
+/** Lançamentos de um mês: em aberto por vencimento, depois os pagos */
+export function doMes(st, mes) {
+  const its = st.lancamentos.filter(l => mesDe(l.dados.vencimento) === mes);
+  const porData = (a, b) => a.dados.vencimento.localeCompare(b.dados.vencimento) || (a.dados.descricao || '').localeCompare(b.dados.descricao || '');
+  return [...its.filter(l => !l.dados.pago).sort(porData), ...its.filter(l => l.dados.pago).sort(porData)];
+}
+
+/** Mês que a tela abre: o próximo com conta em aberto (atrasos aparecem num aviso à parte); sem nada em aberto, o atual */
+export function mesInicial(st, hoje) {
+  const atual = mesDe(hoje);
+  const prox = abertos(st).find(l => ehPagar(l) && mesDe(l.dados.vencimento) >= atual);
+  return prox ? mesDe(prox.dados.vencimento) : atual;
 }
 
 /** Limite livre = limite − fatura em aberto − faturas já fechadas e não pagas desse cartão */

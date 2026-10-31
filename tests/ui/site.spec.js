@@ -15,7 +15,7 @@ const BACKUP = {
   lancamentos: [
     { id: 'l1', descricao: 'Claro', valor: 129.9, vencimento: '2026-10-20', natureza: 'pagar', forma: 'boleto', categoria: 'Casa', recorrencia: 'mensal', codigo: '84670000001-2 99990000000-1', obs: '', pago: false, pagoEm: null },
     { id: 'l2', descricao: 'Aluguel', valor: 1800, vencimento: '2026-11-05', natureza: 'pagar', forma: 'pix', categoria: 'Moradia', recorrencia: 'mensal', codigo: '', obs: '', pago: false, pagoEm: null },
-    { id: 'l3', descricao: 'Fatura Nubank', valor: 1300, vencimento: '2026-11-10', natureza: 'pagar', forma: 'fatura', categoria: 'Cartão', recorrencia: '', codigo: '', obs: 'mínimo R$ 195,00', pago: false, pagoEm: null, cartaoId: 'k1' },
+    { id: 'l3', descricao: 'Fatura Nubank', valor: 1300, vencimento: '2026-11-10', natureza: 'pagar', forma: 'fatura', categoria: 'Cartão', recorrencia: '', codigo: '', obs: 'mínimo R$ 195,00', pago: false, pagoEm: null, cartaoId: 'k1', outroNome: 'Agatha', outroValor: 300 },
     { id: 'l4', descricao: 'Freela site', valor: 500, vencimento: '2026-11-15', natureza: 'receber', forma: 'pix', categoria: '', recorrencia: '', codigo: '', obs: '', pago: false, pagoEm: null },
     { id: 'l5', descricao: 'Seguro obra', valor: 210, vencimento: '2026-12-15', natureza: 'pagar', forma: 'boleto', categoria: 'Obra', recorrencia: 'mensal', codigo: '', obs: '', pago: false, pagoEm: null },
     { id: 'l6', descricao: 'MEI', valor: 75.6, vencimento: '2026-10-20', natureza: 'pagar', forma: 'boleto', categoria: 'Impostos', recorrencia: 'mensal', codigo: '', obs: '', pago: true, pagoEm: '2026-10-19' }
@@ -29,247 +29,338 @@ const erros = page => {
   return lista;
 };
 const arquivo = obj => ({ name: 'financeiro-backup.json', mimeType: 'application/json', buffer: Buffer.from(typeof obj === 'string' ? obj : JSON.stringify(obj)) });
-async function importar(page, obj = BACKUP) {
-  await page.locator('#arquivo').setInputFiles(arquivo(obj));
-}
+const importar = (page, obj = BACKUP) => page.locator('#arquivo').setInputFiles(arquivo(obj));
 async function abrirComDados(page) {
   await page.goto('/');
   await importar(page);
-  await expect(page.locator('#toast')).toContainText('Backup importado');
+  await expect(page.locator('#toast')).toContainText('Backup aberto');
 }
-const item = (page, id) => page.locator(`.item[data-id="${id}"]`);
+const item = (page, id) => page.locator(`#lista .item[data-id="${id}"]`);
+const aba = (page, mes) => page.locator(`#meses .mes[data-mes="${mes}"]`);
+const modal = page => page.getByRole('dialog');
+async function lerDownload(download) {
+  const partes = await (await download.createReadStream()).toArray();
+  return JSON.parse(Buffer.concat(partes).toString('utf8'));
+}
 
 test.beforeEach(async ({ page }) => {
   await page.clock.setFixedTime(AGORA);
 });
 
-test('abre vazio, sem erro, com os primeiros passos', async ({ page }) => {
+test('abre vazio, sem erro, só com o convite para começar', async ({ page }) => {
   const e = erros(page);
   await page.goto('/');
   await expect(page.locator('html')).toHaveAttribute('data-pronto', '1');
   await expect(page.locator('#inicio')).toBeVisible();
   await expect(page.locator('#hoje')).toContainText('31 de outubro de 2026');
-  await expect(page.locator('#r-saldo')).toHaveText('—');
-  await expect(page.locator('#meses-box')).toBeHidden();
+  for (const id of ['#hero', '#meses', '#contas-mes', '#sec-cartoes', '#sec-contas', '#aviso-atraso']) await expect(page.locator(id)).toBeHidden();
+  await expect(page.locator('#bt-novo')).toBeVisible();
   expect(e).toEqual([]);
 });
 
-test('importa o backup e soma tudo certo', async ({ page }) => {
+test('abre o backup no mês atual, com atraso e somas certas', async ({ page }) => {
   const e = erros(page);
   await abrirComDados(page);
   await expect(page.locator('#inicio')).toBeHidden();
-  await expect(page.locator('#r-saldo')).toHaveText('R$ 3.000,00');
-  await expect(page.locator('#r-saldo-sub')).toContainText('R$ 10.000,00 investidos');
-  // a pagar em 30 dias: Claro (atrasada) + Aluguel + Fatura = 3.229,90
-  await expect(page.locator('#r-pagar')).toHaveText('R$ 3.229,90');
-  await expect(page.locator('#r-atraso')).toHaveText('R$ 129,90');
-  await expect(page.locator('#r-atraso-sub')).toHaveText('1 conta vencida');
-  // sobra: 3000 + 500 − 3229,90
-  await expect(page.locator('#r-sobra')).toHaveText('R$ 270,10');
-
-  // por mês
-  const linhas = page.locator('#meses tr');
-  await expect(linhas).toHaveCount(3);
-  await expect(linhas.nth(0)).toContainText('out/2026');
-  await expect(linhas.nth(1).locator('td')).toHaveText(['R$ 1.300,00', 'R$ 1.800,00', 'R$ 3.100,00', 'R$ 0,00', 'R$ 3.100,00']);
-  await expect(linhas.nth(0).locator('td').nth(3)).toHaveText('R$ 75,60');
-
-  // grupos
-  await expect(page.locator('.grupo.atrasado .item')).toHaveCount(1);
-  await expect(page.locator('.grupo.semana .item')).toHaveCount(1);
-  await expect(item(page, 'l1')).toContainText('venceu há 11 dias');
-  await expect(item(page, 'l4')).toContainText('a receber');
-  await expect(item(page, 'l4').getByRole('button', { name: 'Recebi' })).toBeVisible();
-
-  // cartão: livre = 5000 − 640,50 em aberto − 1300 fechada
-  const cartao = page.locator('#cartoes .linha[data-id="k1"]');
-  await expect(cartao).toContainText('livre R$ 3.059,50 de R$ 5.000,00');
-  await expect(cartao).toContainText('vence 10/11');
-  // CDB sem atualização há 30 dias fica em destaque
-  await expect(page.locator('#contas .linha[data-id="c2"] .pill.ambar')).toContainText('há 30 dias');
-  await expect(page.locator('#status')).toContainText('Backup em dia');
+  await expect(aba(page, '2026-10')).toHaveAttribute('aria-pressed', 'true');
+  await expect(aba(page, '2026-10')).toHaveClass(/atrasado/);
+  await expect(page.locator('#h-rot')).toHaveText('Falta pagar em outubro');
+  await expect(page.locator('#h-valor')).toHaveText('R$ 129,90');
+  await expect(page.locator('#h-sub')).toHaveText('R$ 75,60 pago de R$ 205,50 · 1 conta em aberto');
+  await expect(page.locator('#h-barra')).toHaveAttribute('aria-valuenow', '37');
+  await expect(page.locator('#aviso-atraso')).toContainText('R$ 129,90 atrasado: Claro');
+  await expect(page.locator('#bt-ver-atraso')).toBeHidden();
+  await expect(item(page, 'l1')).toHaveClass(/atrasado/);
+  await expect(item(page, 'l1')).toContainText('Venceu 20/10 · há 11 dias');
+  await expect(item(page, 'l6')).toHaveClass(/pago/);
+  await expect(page.locator('#lista .item')).toHaveCount(2);
+  // cartão: 5000 − 640,50 em aberto − 1300 da fatura fechada
+  await expect(page.locator('#cartoes [data-id="k1"]')).toContainText('livre R$ 3.059,50');
+  await expect(page.locator('#contas')).toContainText('Itaú corrente');
+  await expect(page.locator('#bt-backup')).toHaveText('Backup em dia');
   expect(e).toEqual([]);
 });
 
-test('lança uma conta pelo formulário, valida e entende 1.800', async ({ page }) => {
-  await page.goto('/');
-  await page.locator('#bt-novo').click();
-  const dialogo = page.getByRole('dialog', { name: 'Novo lançamento' });
-  await expect(dialogo).toBeVisible();
-  await expect(page.locator('#f-lancamentos-descricao')).toBeFocused();
-  await dialogo.getByRole('button', { name: 'Salvar' }).click();
-  await expect(dialogo.locator('.msg')).toHaveText('Preencha “Descrição”.');
-  await page.locator('#f-lancamentos-descricao').fill('Aluguel');
-  await page.locator('#f-lancamentos-valor').fill('abc');
-  await dialogo.getByRole('button', { name: 'Salvar' }).click();
-  await expect(dialogo.locator('.msg')).toContainText('precisa ser um valor');
-  await expect(page.locator('#f-lancamentos-valor')).toHaveAttribute('aria-invalid', 'true');
-  await page.locator('#f-lancamentos-valor').fill('1.800');
-  await page.locator('#f-lancamentos-vencimento').fill('2026-11-05');
-  await page.locator('#f-lancamentos-recorrencia').selectOption('mensal');
-  await page.locator('#f-lancamentos-categoria').fill('Moradia');
-  await dialogo.getByRole('button', { name: 'Salvar' }).click();
-  await expect(dialogo).toBeHidden();
-  await expect(page.locator('.grupo.semana .item')).toContainText('R$ 1.800,00');
-  await expect(page.locator('#status')).toContainText('alterações fora do backup');
-  // continua lá depois de recarregar
-  await page.reload();
-  await expect(page.locator('.grupo.semana .item')).toContainText('Aluguel');
-  await expect(page.locator('#r-pagar')).toHaveText('R$ 1.800,00');
-});
-
-test('campo do cartão só aparece quando a forma é fatura', async ({ page }) => {
+test('novembro separa a sua parte da parte da Agatha', async ({ page }) => {
   await abrirComDados(page);
-  await page.locator('#bt-novo').click();
-  const caixa = page.locator('#f-lancamentos-cartaoId');
-  await expect(caixa).toBeHidden();
-  await page.locator('#f-lancamentos-forma').selectOption('fatura');
-  await expect(caixa).toBeVisible();
-  await expect(caixa.locator('option')).toHaveText(['Nenhum', 'Nubank']);
+  await aba(page, '2026-11').click();
+  await expect(aba(page, '2026-11')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#h-rot')).toHaveText('Sua parte que falta pagar em novembro');
+  await expect(page.locator('#h-valor')).toHaveText('R$ 2.800,00');
+  const partes = page.locator('#h-partes');
+  await expect(partes).toContainText('Boletos em abertoR$ 3.100,00');
+  await expect(partes).toContainText('Parte da AgathaR$ 300,00');
+  await expect(partes).toContainText('Em conta hojeR$ 3.000,00');
+  await expect(partes).toContainText('Sobra depois de pagarR$ 400,00'); // 3000 + 500 a receber − 3100
+  await expect(item(page, 'l3')).toContainText('seu R$ 1.000,00');
+  await expect(item(page, 'l4')).toContainText('+ R$ 500,00');
+  // o aviso de atraso agora leva de volta a outubro
+  await page.locator('#bt-ver-atraso').click();
+  await expect(aba(page, '2026-10')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#lista .atrasado .abrir')).toBeFocused();
 });
 
-test('Paguei numa conta mensal cria a do mês seguinte; Desfazer volta', async ({ page }) => {
+test('marcar como pago pelo círculo, com Desfazer no aviso', async ({ page }) => {
   await abrirComDados(page);
-  await item(page, 'l2').getByRole('button', { name: 'Paguei' }).click();
-  await expect(page.locator('#toast')).toContainText('O de dez/2026 já está na lista');
-  await expect(item(page, 'l2')).toHaveCount(1); // agora na lista de pagos
-  await expect(page.locator('#pagos-box')).toBeVisible();
-  await expect(page.locator('#vencimentos .item:has-text("Aluguel")')).toHaveCount(1);
-  await expect(page.locator('#meses tr').nth(1).locator('td').nth(3)).toHaveText('R$ 1.800,00');
-  await page.locator('#pagos-tit').click();
-  await item(page, 'l2').getByRole('button', { name: 'Desfazer' }).click();
-  await expect(page.locator('#toast')).toHaveText('Voltou para a lista');
-  await expect(page.locator('#vencimentos .item:has-text("Aluguel")')).toHaveCount(1);
-  await expect(item(page, 'l2').getByRole('button', { name: 'Paguei' })).toBeVisible();
+  await item(page, 'l1').locator('.check').click();
+  await expect(page.locator('#toast')).toContainText('Pago. O de novembro já está na lista.');
+  await expect(item(page, 'l1')).toHaveClass(/pago/);
+  await expect(item(page, 'l1').locator('.check')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#aviso-atraso')).toBeHidden();
+  await expect(page.locator('#h-sub')).toHaveText('Tudo pago em outubro.');
+  await aba(page, '2026-11').click();
+  await expect(page.locator('#lista .item', { hasText: 'Claro' })).toHaveCount(1);
+  await aba(page, '2026-10').click();
+  await page.locator('#toast button', { hasText: 'Desfazer' }).click();
+  await expect(item(page, 'l1')).not.toHaveClass(/pago/);
+  await aba(page, '2026-11').click();
+  await expect(page.locator('#lista .item', { hasText: 'Claro' })).toHaveCount(0);
+  // tocar no círculo de um pago desfaz
+  await aba(page, '2026-10').click();
+  await item(page, 'l6').locator('.check').click();
+  await expect(item(page, 'l6')).not.toHaveClass(/pago/);
 });
 
-test('editar e excluir pedem confirmação dentro do formulário', async ({ page }) => {
+test('detalhes mostram a divisão e pagam pela janela', async ({ page }) => {
   await abrirComDados(page);
-  await item(page, 'l5').getByRole('button', { name: 'Editar Seguro obra' }).click();
-  const dialogo = page.getByRole('dialog', { name: 'Editar lançamento' });
-  await expect(page.locator('#f-lancamentos-valor')).toHaveValue('210,00');
-  const excluir = dialogo.getByRole('button', { name: 'Excluir' });
-  await excluir.click();
-  await expect(dialogo).toBeVisible();
-  await expect(dialogo.getByRole('button', { name: 'Toque de novo para excluir' })).toBeVisible();
-  await dialogo.getByRole('button', { name: 'Toque de novo para excluir' }).click();
-  await expect(item(page, 'l5')).toHaveCount(0);
+  await aba(page, '2026-11').click();
+  await item(page, 'l3').locator('.abrir').click();
+  const d = modal(page);
+  await expect(d.locator('h2')).toHaveText('Fatura Nubank');
+  await expect(d.locator('.split')).toContainText('Sua parteR$ 1.000,00');
+  await expect(d.locator('.split')).toContainText('AgathaR$ 300,00');
+  await expect(d).toContainText('Fatura de cartão · Nubank');
+  await expect(d.getByRole('button', { name: 'Paguei' })).toBeFocused();
+  await d.getByRole('button', { name: 'Paguei' }).click();
+  await expect(modal(page)).toHaveCount(0);
+  await expect(item(page, 'l3')).toHaveClass(/pago/);
+  await expect(page.locator('#h-valor')).toHaveText('R$ 1.800,00');
+  await item(page, 'l3').locator('.abrir').click();
+  await modal(page).getByRole('button', { name: 'Desfazer pagamento' }).click();
+  await expect(item(page, 'l3')).not.toHaveClass(/pago/);
 });
 
-test('modal: Esc fecha e devolve o foco; Tab fica preso no formulário', async ({ page, browserName }) => {
-  await page.goto('/');
-  const botao = page.locator('#bt-conta');
-  await botao.focus();
-  await page.keyboard.press('Enter');
-  const dialogo = page.getByRole('dialog');
-  await expect(dialogo).toBeVisible();
-  for (let i = 0; i < 12; i++) await page.keyboard.press('Tab');
-  expect(await page.evaluate(() => !!document.activeElement.closest('.modal'))).toBe(true);
-  await page.keyboard.press('Escape');
-  await expect(dialogo).toBeHidden();
-  if (browserName !== 'webkit') await expect(botao).toBeFocused();
-});
-
-test('copiar código do boleto', async ({ page, context, browserName }) => {
+test('copiar o código do boleto', async ({ page, context, browserName }) => {
   test.skip(browserName !== 'chromium', 'permissão de área de transferência só no Chromium');
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await abrirComDados(page);
-  await item(page, 'l1').getByRole('button', { name: 'Copiar código' }).click();
+  await item(page, 'l1').locator('.abrir').click();
+  await modal(page).getByRole('button', { name: 'Copiar código' }).click();
   await expect(page.locator('#toast')).toHaveText('Código copiado');
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('84670000001-2 99990000000-1');
 });
 
-test('fatura fechou: lança nos vencimentos e zera o ciclo', async ({ page }) => {
+test('lançar: validação, "1.800" vira mil e oitocentos e a tela vai para o mês', async ({ page }) => {
   await abrirComDados(page);
-  const cartao = page.locator('#cartoes .linha[data-id="k1"]');
-  await cartao.getByRole('button', { name: 'Fatura fechou: lançar' }).click();
-  await expect(page.locator('#toast')).toContainText('R$ 640,50');
-  // somou na fatura de novembro que já existia
-  await expect(item(page, 'l3')).toContainText('R$ 1.940,50');
-  await expect(cartao).toContainText('R$ 0,00');
-  await expect(cartao.getByRole('button', { name: 'Fatura fechou: lançar' })).toHaveCount(0);
+  await page.locator('#bt-novo').click();
+  const f = modal(page);
+  await expect(f.locator('h2')).toHaveText('Nova conta');
+  await expect(f.getByLabel('Descrição')).toBeFocused();
+  await expect(f.locator('details.mais')).not.toHaveAttribute('open', '');
+  await f.getByRole('button', { name: 'Salvar' }).click();
+  await expect(f.locator('.msg')).toHaveText('Preencha “Descrição”.');
+  await f.getByLabel('Descrição').fill('Seguro carro');
+  await f.getByLabel('Valor (R$)').fill('abc');
+  await f.getByRole('button', { name: 'Salvar' }).click();
+  await expect(f.locator('.msg')).toContainText('precisa ser um valor');
+  await expect(f.getByLabel('Valor (R$)')).toHaveAttribute('aria-invalid', 'true');
+  await f.getByLabel('Valor (R$)').fill('1.800');
+  await f.getByLabel('Vencimento').fill('2026-12-07');
+  await f.getByLabel('Repete todo mês').check();
+  // parte de outra pessoa maior que o total
+  await f.locator('details.mais summary').click();
+  await f.getByLabel('Parte de outra pessoa').fill('Agatha');
+  await f.getByLabel('Valor dela/dele (R$)').fill('2000');
+  await f.getByRole('button', { name: 'Salvar' }).click();
+  await expect(f.locator('.msg')).toHaveText('A parte de outra pessoa não pode passar do valor total.');
+  await f.getByLabel('Valor dela/dele (R$)').fill('600');
+  await f.getByRole('button', { name: 'Salvar' }).click();
+  await expect(modal(page)).toHaveCount(0);
+  await expect(aba(page, '2026-12')).toHaveAttribute('aria-pressed', 'true');
+  const linha = page.locator('#lista .item', { hasText: 'Seguro carro' });
+  await expect(linha).toContainText('R$ 1.800,00');
+  await expect(linha).toContainText('seu R$ 1.200,00');
+  await expect(page.locator('#bt-backup')).toHaveText('Salvar backup');
 });
 
-test('exporta um backup que importa de volta igual', async ({ page }) => {
+test('a receber pelo seletor do formulário', async ({ page }) => {
   await abrirComDados(page);
-  await item(page, 'l2').getByRole('button', { name: 'Paguei' }).click();
-  const [download] = await Promise.all([page.waitForEvent('download'), page.locator('#bt-exportar').click()]);
+  await page.locator('#bt-novo').click();
+  const f = modal(page);
+  await f.getByText('A receber', { exact: true }).click();
+  await f.getByLabel('Descrição').fill('Reembolso Agatha');
+  await f.getByLabel('Valor (R$)').fill('300');
+  await f.getByLabel('Vencimento').fill('2026-11-12');
+  await f.getByRole('button', { name: 'Salvar' }).click();
+  const linha = page.locator('#lista .item', { hasText: 'Reembolso Agatha' });
+  await expect(linha).toHaveClass(/receber/);
+  await expect(linha).toContainText('+ R$ 300,00');
+  await expect(page.locator('#h-valor')).toHaveText('R$ 2.800,00'); // a receber não mexe no que falta pagar
+});
+
+test('editar e excluir (com confirmação em dois toques)', async ({ page }) => {
+  await abrirComDados(page);
+  await item(page, 'l1').locator('.abrir').click();
+  await modal(page).getByRole('button', { name: 'Editar', exact: true }).click();
+  const f = modal(page);
+  await expect(f.locator('h2')).toHaveText('Editar conta');
+  await expect(f.getByLabel('Descrição')).toHaveValue('Claro');
+  await expect(f.getByLabel('Valor (R$)')).toHaveValue('129,90');
+  await expect(f.locator('details.mais')).toHaveAttribute('open', '');
+  await f.getByLabel('Valor (R$)').fill('139,90');
+  await f.getByRole('button', { name: 'Salvar' }).click();
+  await expect(item(page, 'l1')).toContainText('R$ 139,90');
+
+  await item(page, 'l1').locator('.abrir').click();
+  await modal(page).getByRole('button', { name: 'Editar', exact: true }).click();
+  const excluir = modal(page).getByRole('button', { name: 'Excluir' });
+  await excluir.click();
+  await expect(modal(page).getByRole('button', { name: 'Toque de novo para excluir' })).toBeVisible();
+  await expect(item(page, 'l1')).toHaveCount(1);
+  await modal(page).getByRole('button', { name: 'Toque de novo para excluir' }).click();
+  await expect(item(page, 'l1')).toHaveCount(0);
+  await expect(page.locator('#toast')).toHaveText('Excluído');
+});
+
+test('janela: Esc fecha e devolve o foco; Tab fica dentro; o fundo fica inerte', async ({ page }) => {
+  await abrirComDados(page);
+  const abrir = item(page, 'l1').locator('.abrir');
+  await abrir.focus();
+  await page.keyboard.press('Enter');
+  await expect(modal(page)).toBeVisible();
+  await expect(page.locator('.wrap')).toHaveJSProperty('inert', true);
+  for (let i = 0; i < 8; i++) {
+    await page.keyboard.press('Tab');
+    expect(await page.evaluate(() => !!document.activeElement.closest('.modal'))).toBe(true);
+  }
+  // detalhe → editar → Esc: o foco volta para a linha que abriu
+  await modal(page).getByRole('button', { name: 'Editar', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await expect(modal(page)).toHaveCount(0);
+  await expect(page.locator('.wrap')).toHaveJSProperty('inert', false);
+  await expect(abrir).toBeFocused();
+  // clique no fundo fecha; clique dentro não
+  await page.locator('#bt-novo').click();
+  await modal(page).locator('h2').click();
+  await expect(modal(page)).toBeVisible();
+  await page.mouse.click(5, 5);
+  await expect(modal(page)).toHaveCount(0);
+});
+
+test('cartão: fatura fechou soma na fatura do mês', async ({ page }) => {
+  await abrirComDados(page);
+  await page.locator('#cartoes [data-id="k1"] .linha').click();
+  await expect(modal(page).locator('h2')).toHaveText('Editar cartão');
+  await modal(page).getByRole('button', { name: 'A fatura fechou: lançar R$ 640,50' }).click();
+  await expect(page.locator('#toast')).toContainText('Fatura de R$ 640,50 lançada para 10/11/2026');
+  await expect(aba(page, '2026-11')).toHaveAttribute('aria-pressed', 'true');
+  await expect(item(page, 'l3')).toContainText('R$ 1.940,50');
+  await expect(page.locator('#cartoes [data-id="k1"]')).toContainText('fatura atual R$ 0,00');
+});
+
+test('conta bancária: atualizar saldo, inclusive negativo', async ({ page }) => {
+  await abrirComDados(page);
+  await page.locator('#contas [data-id="c1"] .linha').click();
+  await modal(page).getByLabel('Saldo atual (R$)').fill('-120,50');
+  await modal(page).getByRole('button', { name: 'Salvar' }).click();
+  await expect(page.locator('#contas [data-id="c1"] .v')).toHaveText('-R$ 120,50');
+  await expect(page.locator('#contas [data-id="c1"] .v')).toHaveClass(/neg/);
+});
+
+test('backup: baixar e abrir de novo dá o mesmo resultado', async ({ page }) => {
+  await abrirComDados(page);
+  await item(page, 'l1').locator('.check').click();
+  await expect(page.locator('#bt-backup')).toHaveText('Salvar backup');
+  await page.locator('#bt-backup').click();
+  await expect(modal(page)).toContainText('Há alterações fora do backup');
+  const [download] = await Promise.all([page.waitForEvent('download'), modal(page).getByRole('button', { name: 'Baixar backup' }).click()]);
   expect(download.suggestedFilename()).toBe('financeiro-backup.json');
-  const json = JSON.parse(await (await download.createReadStream()).toArray().then(b => Buffer.concat(b).toString('utf8')));
+  const json = await lerDownload(download);
   expect(json.versao).toBe(1);
-  expect(json.lancamentos).toHaveLength(7);
-  expect(json.lancamentos.find(l => l.id === 'l2')).toMatchObject({ pago: true, pagoEm: '2026-10-31' });
-  await expect(page.locator('#status')).toContainText('Backup em dia');
-  // limpa e importa o exportado
+  expect(json.lancamentos.find(l => l.id === 'l3')).toMatchObject({ outroNome: 'Agatha', outroValor: 300 });
+  expect(json.lancamentos.find(l => l.id === 'l1').pago).toBe(true);
+  await expect(page.locator('#bt-backup')).toHaveText('Backup em dia');
+
   await page.evaluate(() => localStorage.clear());
   await page.reload();
-  await expect(page.locator('#inicio')).toBeVisible();
   await importar(page, json);
-  await expect(page.locator('#toast')).toContainText('7 lançamentos');
-  await expect(page.locator('#r-pagar')).toHaveText('R$ 1.429,90');
+  // outubro ficou todo pago, então a tela abre no próximo mês com conta em aberto
+  await expect(aba(page, '2026-11')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#h-valor')).toHaveText('R$ 2.929,90'); // 1.800 + 1.000 + Claro de novembro, criado ao pagar
+  await aba(page, '2026-10').click();
+  await expect(item(page, 'l1')).toHaveClass(/pago/);
 });
 
-test('importar por cima pede confirmação e avisa quando o backup é mais antigo', async ({ page }) => {
+test('abrir backup por cima pede confirmação e avisa se for mais antigo', async ({ page }) => {
   await abrirComDados(page);
-  await item(page, 'l2').getByRole('button', { name: 'Paguei' }).click();
-  await importar(page);
-  const caixa = page.locator('#confirma');
-  await expect(caixa).toBeVisible();
-  await expect(caixa).toContainText('mais antigo que as alterações feitas aqui');
-  await caixa.getByRole('button', { name: 'Cancelar' }).click();
-  await expect(caixa).toBeHidden();
-  await expect(page.locator('#pagos-box')).toBeVisible();
-  await importar(page);
-  await caixa.getByRole('button', { name: 'Substituir' }).click();
-  await expect(page.locator('#pagos-box')).toBeVisible(); // o MEI pago no backup
-  await expect(item(page, 'l2').getByRole('button', { name: 'Paguei' })).toBeVisible();
+  await item(page, 'l1').locator('.check').click(); // alteração local depois do backup
+  await importar(page, { ...BACKUP, lancamentos: BACKUP.lancamentos.slice(0, 2) });
+  const d = modal(page);
+  await expect(d.locator('.confirma')).toContainText('2 lançamentos');
+  await expect(d.locator('.confirma')).toContainText('mais antigo');
+  await d.getByRole('button', { name: 'Cancelar' }).click();
+  await expect(page.locator('#lista .item')).toHaveCount(2);
+  await page.keyboard.press('Escape');
+  await importar(page, { ...BACKUP, lancamentos: BACKUP.lancamentos.slice(0, 2) });
+  await modal(page).getByRole('button', { name: 'Trocar' }).click();
+  await expect(modal(page)).toHaveCount(0);
+  await expect(page.locator('#toast')).toContainText('Backup aberto: 2 lançamentos');
+  await expect(item(page, 'l1')).not.toHaveClass(/pago/);
 });
 
-test('arquivo inválido não apaga nada', async ({ page }) => {
+test('arquivos inválidos não estragam nada', async ({ page }) => {
   await abrirComDados(page);
-  await importar(page, '{quebrado');
-  await expect(page.locator('#toast')).toContainText('Não consegui ler');
-  await importar(page, { contas: [null] });
-  await expect(page.locator('#toast')).toContainText('Backup com problemas');
-  await importar(page, { lancamentos: [{ descricao: 'X', valor: 1, vencimento: 20261110 }] });
-  await expect(page.locator('#toast')).toContainText('vencimento válido');
-  await expect(page.locator('#r-saldo')).toHaveText('R$ 3.000,00');
+  await importar(page, 'não é json');
+  await expect(page.locator('#toast')).toContainText('Não consegui ler esse arquivo');
+  await importar(page, { foo: 1 });
+  await expect(page.locator('#toast')).toContainText('não é um backup do Financeiro');
+  await importar(page, { lancamentos: [{ descricao: 'X', valor: 1, vencimento: '31/10/2026' }] });
+  await expect(page.locator('#toast')).toContainText('sem vencimento válido');
+  await expect(page.locator('#lista .item')).toHaveCount(2);
 });
 
-test('nada transborda na largura da tela', async ({ page }) => {
+test('sem rolagem lateral de 320 a 1280 px', async ({ page }) => {
   await abrirComDados(page);
-  for (const largura of [320, 375, 768, 1280]) {
-    await page.setViewportSize({ width: largura, height: 800 });
-    const sobra = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-    expect(sobra, `largura ${largura}`).toBeLessThanOrEqual(0);
+  for (const w of [320, 375, 768, 1280]) {
+    await page.setViewportSize({ width: w, height: 800 });
+    for (const mes of ['2026-10', '2026-11']) {
+      await aba(page, mes).click();
+      const largura = await page.evaluate(() => document.documentElement.scrollWidth);
+      expect(largura, `largura em ${w}px`).toBeLessThanOrEqual(w);
+    }
+    await page.locator('#bt-novo').click();
+    await modal(page).locator('details.mais summary').click();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(w);
+    await page.keyboard.press('Escape');
   }
-  await page.setViewportSize({ width: 320, height: 700 });
-  await item(page, 'l1').getByRole('button', { name: /^Editar/ }).click();
-  const sobra = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  expect(sobra).toBeLessThanOrEqual(0);
 });
 
-test('botões têm tamanho de toque no celular', async ({ page, isMobile }) => {
+test('no celular, tudo que se toca tem pelo menos 40 px', async ({ page, isMobile }) => {
   test.skip(!isMobile, 'só no celular');
   await abrirComDados(page);
-  const alturas = await page.locator('button:visible').evaluateAll(bs => bs.map(b => [b.textContent.trim(), b.getBoundingClientRect().height]));
-  for (const [nome, h] of alturas) expect(h, nome).toBeGreaterThanOrEqual(36);
-  // ações de lançar ficam fixas embaixo
-  const barra = await page.locator('.acoes-topo').boundingBox();
-  const vp = page.viewportSize();
-  expect(barra.y + barra.height).toBeGreaterThan(vp.height - 2);
+  const pequenos = await page.evaluate(() => [...document.querySelectorAll('button')]
+    .filter(b => b.offsetParent !== null || getComputedStyle(b).position === 'fixed')
+    .map(b => ({ t: b.textContent.trim() || b.getAttribute('aria-label'), h: b.getBoundingClientRect().height, w: b.getBoundingClientRect().width }))
+    .filter(b => b.h < 40 || b.w < 40));
+  expect(pequenos).toEqual([]);
 });
 
-for (const tema of ['light', 'dark']) {
-  test(`acessibilidade sem violações graves (${tema})`, async ({ page }) => {
-    await page.emulateMedia({ colorScheme: tema });
-    await abrirComDados(page);
-    await page.locator('#pagos-tit').click();
-    const r = await new AxeBuilder({ page }).analyze();
-    const graves = r.violations.filter(v => ['serious', 'critical'].includes(v.impact));
-    expect(graves.map(v => `${v.id}: ${v.nodes.map(n => n.target).join(' | ')}`)).toEqual([]);
-    await page.locator('#bt-novo').click();
-    const r2 = await new AxeBuilder({ page }).include('.modal').analyze();
-    expect(r2.violations.filter(v => ['serious', 'critical'].includes(v.impact)).map(v => `${v.id}: ${v.nodes.map(n => n.target + ' ' + (n.any[0]?.message || '')).join(' | ')}`)).toEqual([]);
+for (const esquema of ['light', 'dark']) {
+  test(`acessibilidade (axe) no tema ${esquema}, com e sem janela aberta`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: esquema });
+    await page.goto('/');
+    const vazio = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+    expect(vazio.violations.map(v => v.id + ': ' + v.nodes.map(n => n.target).join(' | '))).toEqual([]);
+    await importar(page);
+    await aba(page, '2026-11').click();
+    const cheio = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+    expect(cheio.violations.map(v => v.id + ': ' + v.nodes.map(n => n.target).join(' | '))).toEqual([]);
+    await item(page, 'l3').locator('.abrir').click();
+    const det = await new AxeBuilder({ page }).include('.modal').withTags(['wcag2a', 'wcag2aa']).analyze();
+    expect(det.violations.map(v => v.id + ': ' + v.nodes.map(n => n.target).join(' | '))).toEqual([]);
+    await modal(page).getByRole('button', { name: 'Editar', exact: true }).click();
+    await modal(page).locator('details.mais summary').click();
+    const form = await new AxeBuilder({ page }).include('.modal').withTags(['wcag2a', 'wcag2aa']).analyze();
+    expect(form.violations.map(v => v.id + ': ' + v.nodes.map(n => n.target).join(' | '))).toEqual([]);
   });
 }

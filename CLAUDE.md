@@ -5,7 +5,8 @@ Repo: github.com/brenisio/financeiro (conta pessoal; usar `GH_TOKEN=$(gh auth to
 
 ## Estrutura e testes
 
-- `index.html` (HTML + CSS) · `js/logica.js` (regras puras: datas, valores, backup, somas, recorrência) · `js/app.js` (DOM, localStorage, import/export).
+- `index.html` (HTML + CSS) · `js/logica.js` (regras puras: datas, valores, backup, somas por mês, sua parte × de outros, recorrência) · `js/app.js` (DOM, localStorage, import/export).
+- Tela: uma coluna; abas de mês → destaque "falta pagar (sua parte)" → lista do mês (círculo = paguei, linha = detalhes) → cartões e bancos. Backup fica no botão do topo; "Lançar" é o botão fixo.
 - `ferramentas/fin.py` edita o backup pela linha de comando com as mesmas regras (dia 31, valor "1.800" = mil e oitocentos, sem duplicar).
 - Testes: `npm test` (node --test da lógica + unittest do fin.py) e `npm run test:ui` (Playwright: desktop Chromium, Pixel 5, Firefox; axe; overflow 320–1280px). Já limitados a 4 workers.
   Porta dos testes: 8797 (a 8792 é usada por outro projeto do Breno). O relógio dos testes de UI é fixo em 31/10/2026.
@@ -30,7 +31,13 @@ python3 ferramentas/fin.py conta  --descricao "Aluguel" --valor 1800 --venciment
 python3 ferramentas/fin.py saldo  --conta "Itaú corrente" --valor 2350
 python3 ferramentas/fin.py pago   --descricao "Aluguel" [--mes 2026-11] [--em 05/11/2026]
 python3 ferramentas/fin.py resumo [--mes 2026-11]
+# parte de outra pessoa no mesmo boleto (ex.: cartão adicional da Agatha), em fatura ou conta:
+python3 ferramentas/fin.py fatura ... --outro-nome Agatha --outro-valor 2.048,92
 ```
+
+Ao relançar uma fatura, repita `--minimo`, `--fechamento` e `--obs`: a observação é refeita a cada chamada.
+Fatura com cartão adicional de outra pessoa: some por portador no PDF e lance a parte dela com `--outro-*`
+(o site mostra "sua parte" no destaque do mês e a parte dela separada).
 
 ## Quando o Breno mandar uma fatura em PDF
 

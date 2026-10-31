@@ -1,12 +1,16 @@
 // Interface do Financeiro. As regras ficam em logica.js; aqui é só DOM, armazenamento e backup.
 import {
-  COLECOES, MES, FORMAS, TIPOS_CONTA, deIso, hojeIso, quando, nomeMes, pad, brl, parseValor, valorParaCampo,
+  COLECOES, MES, FORMAS, TIPOS_CONTA, deIso, hojeIso, quando, pad, brl, parseValor, valorParaCampo,
   deBackup, paraBackup, contagem, backupPendente, vazio, adicionar, atualizar, remover, pagar, desfazer,
-  fecharFatura, resumo, grupos, pagosRecentes, porMes, disponivel, proximoDia, dias, ehData
+  fecharFatura, resumo, porMes, somaMeses, doMes, mesInicial, parteMinha, disponivel, dias, ehData, mesDe
 } from './logica.js';
 
 const CHAVE = 'financeiro-breno.v1', CHAVE_META = 'financeiro-breno.meta';
 const $ = id => document.getElementById(id);
+const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const mesLongo = m => MESES[Number(m.slice(5, 7)) - 1];
+const dataCurta = s => { const d = deIso(s); return pad(d.getDate()) + '/' + pad(d.getMonth() + 1); };
+const dataLonga = s => deIso(s).toLocaleDateString('pt-BR');
 
 function el(tag, attrs, ...filhos) {
   const e = document.createElement(tag);
@@ -21,10 +25,13 @@ function el(tag, attrs, ...filhos) {
 }
 
 let toastT;
-function toast(msg) {
+/** Aviso rápido; com `acao` ({ rot, fn }) ganha um botão (ex.: Desfazer) e fica mais tempo na tela */
+function toast(msg, acao) {
   const t = $('toast');
-  t.textContent = msg; t.hidden = false;
-  clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 3200);
+  t.replaceChildren(el('span', {}, msg));
+  if (acao) t.append(el('button', { type: 'button', onclick: () => { t.hidden = true; acao.fn(); } }, acao.rot));
+  t.hidden = false;
+  clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, acao ? 6000 : 3200);
 }
 
 // ---------- estado e armazenamento ----------
@@ -32,6 +39,7 @@ function toast(msg) {
 let st = vazio();
 let meta = { alteradoEm: null, exportadoEm: null };
 let armazenamentoOk = true;
+let mesSel = null; // mês escolhido nas abas; null = o que mesInicial escolher
 
 function lerLocal() {
   try {
@@ -40,7 +48,7 @@ function lerLocal() {
     meta = Object.assign({ alteradoEm: null, exportadoEm: null }, JSON.parse(localStorage.getItem(CHAVE_META) || '{}'));
   } catch (e) {
     st = vazio();
-    if (e instanceof Error && !(e instanceof SyntaxError) && e.message.startsWith('Backup')) toast('Os dados salvos neste navegador estão inválidos. Importe seu backup.');
+    if (e instanceof Error && e.message.startsWith('Backup')) toast('Os dados salvos neste navegador estão inválidos. Abra seu backup.');
   }
 }
 function gravarLocal() {
@@ -51,104 +59,167 @@ function gravarLocal() {
   } catch { armazenamentoOk = false; }
   return armazenamentoOk;
 }
-function aplicar(novo, msg) {
+function aplicar(novo, msg, acao) {
   st = novo;
   meta.alteradoEm = new Date().toISOString();
-  if (!gravarLocal()) toast('O navegador não deixou salvar. Exporte o backup antes de fechar a página.');
-  else if (msg) toast(msg);
+  if (!gravarLocal()) toast('O navegador não deixou salvar. Baixe o backup antes de fechar a página.');
+  else if (msg) toast(msg, acao);
   render();
+}
+
+// ---------- janela (modal) ----------
+
+let fecharAtual = null, origemModal = null;
+// com a janela aberta, o resto da página sai do alcance do teclado e do leitor de tela
+const fundoInerte = sim => { for (const e of [document.querySelector('.wrap'), $('bt-novo')]) e.inert = sim; };
+function abrirModal(conteudo, foco) {
+  const raiz = $('modal-raiz');
+  // trocar de janela (detalhe → editar) mantém o foco de volta no que abriu a primeira
+  if (fecharAtual) fecharAtual(true); else origemModal = document.activeElement;
+  const fundo = el('div', { class: 'modal-fundo', onmousedown: e => { if (e.target === e.currentTarget) fechar(); } }, conteudo);
+  function teclas(e) {
+    if (e.key === 'Escape') { e.preventDefault(); fechar(); }
+    if (e.key === 'Tab') { // mantém o foco dentro da janela
+      const f = [...conteudo.querySelectorAll('button, input, select, textarea, summary, [href]')].filter(x => !x.disabled && x.offsetParent !== null);
+      const [pri, ult] = [f[0], f[f.length - 1]];
+      if (e.shiftKey && document.activeElement === pri) { e.preventDefault(); ult.focus(); }
+      else if (!e.shiftKey && document.activeElement === ult) { e.preventDefault(); pri.focus(); }
+    }
+  }
+  function fechar(trocando) {
+    document.removeEventListener('keydown', teclas);
+    raiz.replaceChildren();
+    fecharAtual = null;
+    if (trocando) return;
+    document.body.classList.remove('travado');
+    fundoInerte(false);
+    const o = origemModal; origemModal = null;
+    if (o && document.contains(o)) o.focus();
+    else $('bt-novo').focus();
+  }
+  fecharAtual = fechar;
+  document.addEventListener('keydown', teclas);
+  document.body.classList.add('travado');
+  fundoInerte(true);
+  raiz.replaceChildren(fundo);
+  (foco || conteudo.querySelector('button, input')).focus();
+  return fechar;
+}
+const fecharModal = () => fecharAtual && fecharAtual();
+
+function janela(tag, titulo, attrs, ...corpo) {
+  return el(tag, { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'modal-titulo', ...attrs },
+    el('div', { class: 'modal-topo' },
+      el('h2', { id: 'modal-titulo' }, titulo),
+      el('button', { class: 'btn-icone', type: 'button', 'aria-label': 'Fechar', onclick: fecharModal }, '×')),
+    ...corpo);
 }
 
 // ---------- formulários ----------
 
 const ESPECS = {
-  lancamentos: { nome: 'lançamento', campos: [
-    { k: 'descricao', l: 'Descrição', t: 'text', req: 1, ph: 'Ex.: Aluguel, Claro, MEI', auto: 'off' },
-    { k: 'valor', l: 'Valor (R$)', t: 'money', req: 1, ph: '182,40' },
-    { k: 'vencimento', l: 'Vencimento', t: 'date', req: 1 },
-    { k: 'natureza', l: 'Tipo', t: 'select', o: [['pagar', 'A pagar'], ['receber', 'A receber']], meia: 1 },
-    { k: 'forma', l: 'Forma', t: 'select', o: FORMAS, meia: 1 },
-    { k: 'cartaoId', l: 'Qual cartão', t: 'select', cartoes: 1, meia: 1 },
-    { k: 'recorrencia', l: 'Repete', t: 'select', o: [['', 'Não repete'], ['mensal', 'Todo mês']], meia: 1 },
-    { k: 'categoria', l: 'Categoria', t: 'text', ph: 'Moradia, obra…', meia: 1, lista: 'categorias' },
-    { k: 'codigo', l: 'Linha digitável ou Pix copia e cola', t: 'textarea' },
-    { k: 'obs', l: 'Observação', t: 'textarea' }
+  lancamentos: { nome: 'conta', campos: [
+    { k: 'natureza', l: 'Tipo', t: 'seg', o: [['pagar', 'A pagar'], ['receber', 'A receber']] },
+    { k: 'descricao', l: 'Descrição', t: 'text', req: 1, ph: 'Ex.: Aluguel, Claro, MEI' },
+    { k: 'valor', l: 'Valor (R$)', t: 'money', req: 1, ph: '182,40', meia: 1 },
+    { k: 'vencimento', l: 'Vencimento', t: 'date', req: 1, meia: 1 },
+    { k: 'recorrencia', l: 'Repete todo mês', t: 'check', sim: 'mensal' },
+    { k: 'forma', l: 'Forma', t: 'select', o: FORMAS, meia: 1, mais: 1 },
+    { k: 'cartaoId', l: 'Qual cartão', t: 'select', cartoes: 1, meia: 1, mais: 1 },
+    { k: 'categoria', l: 'Categoria', t: 'text', ph: 'Moradia, obra…', lista: 'categorias', mais: 1 },
+    { k: 'outroNome', l: 'Parte de outra pessoa', t: 'text', ph: 'Ex.: Agatha', meia: 1, mais: 1 },
+    { k: 'outroValor', l: 'Valor dela/dele (R$)', t: 'money', ph: '0,00', meia: 1, mais: 1 },
+    { k: 'codigo', l: 'Linha digitável ou Pix copia e cola', t: 'textarea', mais: 1 },
+    { k: 'obs', l: 'Observação', t: 'textarea', mais: 1 }
   ] },
-  contas: { nome: 'conta', campos: [
+  contas: { nome: 'conta bancária', campos: [
     { k: 'nome', l: 'Banco / conta', t: 'text', req: 1, ph: 'Ex.: Itaú corrente' },
-    { k: 'tipo', l: 'Tipo', t: 'select', o: TIPOS_CONTA },
-    { k: 'saldo', l: 'Saldo atual (R$)', t: 'money', req: 1, ph: '2.350,00', neg: 1 }
+    { k: 'saldo', l: 'Saldo atual (R$)', t: 'money', req: 1, ph: '2.350,00', neg: 1, meia: 1 },
+    { k: 'tipo', l: 'Tipo', t: 'select', o: TIPOS_CONTA, meia: 1 }
   ] },
   cartoes: { nome: 'cartão', campos: [
     { k: 'nome', l: 'Cartão', t: 'text', req: 1, ph: 'Ex.: Nubank' },
     { k: 'limite', l: 'Limite total (R$)', t: 'money', meia: 1 },
-    { k: 'fatura', l: 'Fatura em aberto (R$)', t: 'money', ph: '0,00', meia: 1 },
-    { k: 'diaFechamento', l: 'Dia do fechamento', t: 'day', meia: 1 },
-    { k: 'diaVencimento', l: 'Dia do vencimento', t: 'day', req: 1, meia: 1 }
+    { k: 'fatura', l: 'Fatura atual, ainda aberta (R$)', t: 'money', ph: '0,00', meia: 1 },
+    { k: 'diaFechamento', l: 'Dia que fecha', t: 'day', meia: 1 },
+    { k: 'diaVencimento', l: 'Dia que vence', t: 'day', req: 1, meia: 1 }
   ] }
 };
 
-let fecharModal = null;
 function abrirForm(colecao, item, padrao) {
   const base = ESPECS[colecao];
-  // o campo "Qual cartão" só existe quando há cartões cadastrados
-  const espec = { ...base, campos: base.campos.filter(c => !c.cartoes || st.cartoes.length) };
+  const campos = base.campos.filter(c => !c.cartoes || st.cartoes.length);
   const dados = Object.assign({}, padrao || {}, item ? item.dados : {});
-  const origemFoco = document.activeElement;
-  const raiz = $('modal-raiz');
   const msg = el('p', { class: 'msg', role: 'alert' });
-  const inputs = {};
-  const titulo = (item ? 'Editar ' : 'Novo ') + espec.nome;
+  const ler = {}, alvo = {};
+  let mudouMais = false;
 
-  const campos = espec.campos.map(c => {
+  const montar = c => {
     const id = 'f-' + colecao + '-' + c.k;
+    const v = dados[c.k];
+    if (c.t === 'seg') {
+      const radios = c.o.map(([val, rot]) => el('label', {}, el('input', { type: 'radio', name: id, value: val, checked: (v || c.o[0][0]) === val }), el('span', {}, rot)));
+      ler[c.k] = () => radios.map(r => r.querySelector('input')).find(r => r.checked)?.value || c.o[0][0];
+      alvo[c.k] = radios[0].querySelector('input');
+      return el('div', { class: 'campo seg', role: 'radiogroup', 'aria-label': c.l }, radios);
+    }
+    if (c.t === 'check') {
+      const inp = el('input', { id, type: 'checkbox', checked: v === c.sim });
+      ler[c.k] = () => inp.checked ? c.sim : ''; alvo[c.k] = inp;
+      return el('label', { class: 'campo marca' }, inp, c.l);
+    }
     let inp;
     if (c.t === 'select') {
       const opcoes = c.cartoes ? [['', 'Nenhum'], ...st.cartoes.map(k => [k.id, k.dados.nome])] : c.o;
-      inp = el('select', { id }, opcoes.map(([v, l]) => el('option', { value: v }, l)));
-      c = { ...c, o: opcoes };
-      inp.value = dados[c.k] ?? c.o[0][0];
-      if (inp.selectedIndex < 0) inp.value = c.o[0][0];
+      inp = el('select', { id }, opcoes.map(([val, rot]) => el('option', { value: val }, rot)));
+      inp.value = v ?? opcoes[0][0];
+      if (inp.selectedIndex < 0) inp.value = opcoes[0][0];
+      if (c.mais && inp.value !== opcoes[0][0] && !(c.k === 'forma' && inp.value === 'boleto')) mudouMais = true;
     } else if (c.t === 'textarea') {
       inp = el('textarea', { id, placeholder: c.ph, rows: 2 });
-      inp.value = dados[c.k] || '';
+      inp.value = v || '';
     } else {
-      const tipo = { money: 'text', day: 'number' }[c.t] || c.t;
       inp = el('input', {
-        id, type: tipo, placeholder: c.ph, autocomplete: c.auto || 'off', list: c.lista,
+        id, type: { money: 'text', day: 'number' }[c.t] || c.t, placeholder: c.ph, autocomplete: 'off', list: c.lista,
         inputmode: c.t === 'money' ? 'decimal' : (c.t === 'day' ? 'numeric' : null),
         min: c.t === 'day' ? '1' : null, max: c.t === 'day' ? '31' : null, step: c.t === 'day' ? '1' : null
       });
-      const v = dados[c.k];
-      inp.value = v == null ? '' : (c.t === 'money' ? valorParaCampo(v) : v);
+      inp.value = v == null ? '' : (c.t === 'money' ? (Number(v) ? valorParaCampo(v) : '') : v);
     }
-    inputs[c.k] = inp;
-    return el('div', { class: 'campo' + (c.meia ? ' meia' : '') }, el('label', { for: id }, c.l, c.req || c.t === 'select' ? null : el('span', { class: 'opc' }, ' (opcional)')), inp);
-  });
+    if (c.mais && c.t !== 'select' && inp.value) mudouMais = true;
+    ler[c.k] = () => inp.value.trim(); alvo[c.k] = inp;
+    const opcional = !c.req && c.t !== 'select';
+    return el('div', { class: 'campo' + (c.meia ? ' meia' : '') }, el('label', { for: id }, c.l, opcional ? el('span', { class: 'opc' }, ' (opcional)') : null), inp);
+  };
 
-  // categorias já usadas viram sugestões
+  const principais = campos.filter(c => !c.mais).map(montar);
+  const extras = campos.filter(c => c.mais).map(montar);
+  const mais = extras.length ? el('details', { class: 'mais', open: mudouMais }, el('summary', {}, 'Mais opções'), el('div', { class: 'campos' }, extras)) : null;
+
   // "Qual cartão" só aparece quando a forma é fatura
-  if (inputs.cartaoId) {
-    const caixa = inputs.cartaoId.parentElement;
-    const sincroniza = () => { caixa.hidden = inputs.forma.value !== 'fatura'; };
-    inputs.forma.addEventListener('change', sincroniza); sincroniza();
+  if (alvo.cartaoId) {
+    const caixa = alvo.cartaoId.parentElement;
+    const sincroniza = () => { caixa.hidden = alvo.forma.value !== 'fatura'; };
+    alvo.forma.addEventListener('change', sincroniza); sincroniza();
   }
-
   const cats = [...new Set(st.lancamentos.map(l => l.dados.categoria).filter(Boolean))].sort();
   const datalist = el('datalist', { id: 'categorias' }, cats.map(c => el('option', { value: c })));
 
-  let confirmando = false;
+  let armado = false;
   const btExcluir = item ? el('button', { class: 'btn perigo', type: 'button', onclick: () => {
-    if (!confirmando) { confirmando = true; btExcluir.textContent = 'Toque de novo para excluir'; btExcluir.classList.add('armado'); return; }
-    fechar(); aplicar(remover(st, colecao, item.id), 'Excluído');
+    if (!armado) { armado = true; btExcluir.textContent = 'Toque de novo para excluir'; btExcluir.classList.add('armado'); return; }
+    fecharModal(); aplicar(remover(st, colecao, item.id), 'Excluído');
   } }, 'Excluir') : null;
+  const fat = colecao === 'cartoes' && item && Number(item.dados.fatura) > 0
+    ? el('button', { class: 'btn', type: 'button', onclick: () => { fecharModal(); lancarFatura(item); } }, 'A fatura fechou: lançar ' + brl(item.dados.fatura))
+    : null;
 
-  const form = el('form', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'modal-titulo', novalidate: true, onsubmit: e => {
+  function salvar(e) {
     e.preventDefault();
     const out = {};
-    for (const c of espec.campos) {
-      const inp = inputs[c.k], raw = inp.value.trim();
-      const erro = texto => { msg.textContent = texto; inp.setAttribute('aria-invalid', 'true'); inp.focus(); };
+    for (const c of campos) {
+      const inp = alvo[c.k], raw = ler[c.k]();
+      const erro = texto => { msg.textContent = texto; inp.setAttribute('aria-invalid', 'true'); if (mais && mais.contains(inp)) mais.open = true; inp.focus(); };
       inp.removeAttribute('aria-invalid');
       if (c.req && !raw) return erro('Preencha “' + c.l + '”.');
       if (c.t === 'money') {
@@ -171,56 +242,35 @@ function abrirForm(colecao, item, padrao) {
     const hoje = hojeIso();
     if (colecao !== 'lancamentos') out.atualizadoEm = hoje;
     else {
-      if (out.forma !== 'fatura' || !out.cartaoId) delete out.cartaoId;
-      if (out.forma !== 'fatura' && item?.dados.cartaoId) out.cartaoId = null;
+      if (out.outroValor > out.valor) { alvo.outroValor.setAttribute('aria-invalid', 'true'); mais.open = true; alvo.outroValor.focus(); msg.textContent = 'A parte de outra pessoa não pode passar do valor total.'; return; }
+      if (out.outroValor && !out.outroNome) { alvo.outroNome.setAttribute('aria-invalid', 'true'); mais.open = true; alvo.outroNome.focus(); msg.textContent = 'Diga de quem é a outra parte.'; return; }
+      if (!out.outroValor) { out.outroValor = undefined; out.outroNome = undefined; }
+      if (out.forma !== 'fatura' || !out.cartaoId) out.cartaoId = undefined;
       if (out.recorrencia === 'mensal') out.diaBase = Number(out.vencimento.slice(8));
       if (!item) Object.assign(out, { pago: false, pagoEm: null });
+      mesSel = mesDe(out.vencimento); // mostra o mês do que acabou de salvar
     }
-    fechar();
+    fecharModal();
     aplicar(item ? atualizar(st, colecao, item.id, out) : adicionar(st, colecao, out), 'Salvo');
-  } },
-    el('div', { class: 'modal-topo' },
-      el('h3', { id: 'modal-titulo' }, titulo),
-      el('button', { class: 'btn-icone', type: 'button', 'aria-label': 'Fechar', onclick: () => fechar() }, '×')),
-    el('div', { class: 'campos' }, campos), datalist, msg,
-    el('div', { class: 'rodape' }, btExcluir || el('span'),
-      el('div', { class: 'acoes' },
-        el('button', { class: 'btn', type: 'button', onclick: () => fechar() }, 'Cancelar'),
-        el('button', { class: 'btn primario', type: 'submit' }, 'Salvar')))
-  );
+  }
 
-  const fundo = el('div', { class: 'modal-fundo', onmousedown: e => { if (e.target === e.currentTarget) fechar(); } }, form);
-  function teclas(e) {
-    if (e.key === 'Escape') { e.preventDefault(); fechar(); }
-    if (e.key === 'Tab') { // mantém o foco dentro do formulário
-      const f = [...form.querySelectorAll('button, input, select, textarea')].filter(x => !x.disabled);
-      const [pri, ult] = [f[0], f[f.length - 1]];
-      if (e.shiftKey && document.activeElement === pri) { e.preventDefault(); ult.focus(); }
-      else if (!e.shiftKey && document.activeElement === ult) { e.preventDefault(); pri.focus(); }
-    }
-  }
-  function fechar() {
-    document.removeEventListener('keydown', teclas);
-    raiz.replaceChildren();
-    document.body.classList.remove('travado');
-    fecharModal = null;
-    if (origemFoco && document.contains(origemFoco)) origemFoco.focus();
-  }
-  if (fecharModal) fecharModal();
-  fecharModal = fechar;
-  document.addEventListener('keydown', teclas);
-  document.body.classList.add('travado');
-  raiz.replaceChildren(fundo);
-  inputs[espec.campos[0].k].focus();
+  const form = janela('form', (item ? 'Editar ' : 'Nova ') + base.nome, { novalidate: true, onsubmit: salvar },
+    el('div', { class: 'campos' }, principais), mais, datalist, msg,
+    fat,
+    el('div', { class: 'rodape' }, btExcluir, el('button', { class: 'btn', type: 'button', onclick: fecharModal }, 'Cancelar'), el('button', { class: 'btn primario', type: 'submit' }, 'Salvar')));
+  if (colecao === 'cartoes') form.querySelector('h2').textContent = item ? 'Editar cartão' : 'Novo cartão';
+  abrirModal(form, alvo[campos.find(c => c.t !== 'seg').k]);
 }
 
 // ---------- ações ----------
 
 function marcarPago(l) {
   const r = pagar(st, l.id, hojeIso());
-  const ehReceber = l.dados.natureza === 'receber';
-  aplicar(r.st, r.proximo ? (ehReceber ? 'Recebido' : 'Pago') + '. O de ' + nomeMes(r.proximo.vencimento) + ' já está na lista.' : (ehReceber ? 'Marcado como recebido' : 'Marcado como pago'));
+  const receber = l.dados.natureza === 'receber';
+  const txt = (receber ? 'Recebido' : 'Pago') + (r.proximo ? '. O de ' + mesLongo(r.proximo.vencimento) + ' já está na lista.' : '');
+  aplicar(r.st, txt, { rot: 'Desfazer', fn: () => aplicar(desfazer(st, l.id), 'Voltou para a lista') });
 }
+function voltarAberto(l) { aplicar(desfazer(st, l.id), 'Voltou para a lista'); }
 async function copiar(txt) {
   try { await navigator.clipboard.writeText(txt); toast('Código copiado'); }
   catch { toast('Não deu para copiar. Abra “Editar” e copie do campo.'); }
@@ -228,139 +278,183 @@ async function copiar(txt) {
 function lancarFatura(c) {
   const r = fecharFatura(st, c.id, hojeIso());
   if (!r) return toast('A fatura em aberto está zerada.');
-  aplicar(r.st, 'Fatura de ' + brl(r.valor) + ' lançada para ' + deIso(r.vencimento).toLocaleDateString('pt-BR'));
+  mesSel = mesDe(r.vencimento);
+  aplicar(r.st, 'Fatura de ' + brl(r.valor) + ' lançada para ' + dataLonga(r.vencimento));
+}
+
+// ---------- detalhes de uma conta ----------
+
+const formaNome = f => (FORMAS.find(x => x[0] === f) || [null, f])[1];
+function estadoDe(l, hoje) {
+  if (l.dados.pago) return 'pago';
+  const n = dias(hoje, l.dados.vencimento);
+  return n < 0 ? 'atrasado' : n <= 3 ? 'perto' : '';
+}
+function prazoTexto(l, hoje) {
+  const d = l.dados;
+  if (d.pago) return (d.natureza === 'receber' ? 'Recebido em ' : 'Pago em ') + dataCurta(d.pagoEm || hoje);
+  const n = dias(hoje, d.vencimento);
+  return (n < 0 ? 'Venceu ' : 'Vence ') + dataCurta(d.vencimento) + ' · ' + quando(d.vencimento, hoje);
+}
+
+function abrirDetalhe(l) {
+  const d = l.dados, hoje = hojeIso(), receber = d.natureza === 'receber';
+  const cartao = d.cartaoId ? st.cartoes.find(c => c.id === d.cartaoId) : null;
+  const info = [
+    ['Tipo', receber ? 'A receber' : 'A pagar'],
+    d.forma ? ['Forma', formaNome(d.forma) + (cartao ? ' · ' + cartao.dados.nome : '')] : null,
+    d.categoria ? ['Categoria', d.categoria] : null,
+    d.recorrencia === 'mensal' ? ['Repete', 'Todo mês'] : null,
+    ['Vencimento', dataLonga(d.vencimento)],
+    d.obs ? ['Observação', d.obs] : null
+  ].filter(Boolean);
+  const btPagar = d.pago
+    ? el('button', { class: 'btn', type: 'button', onclick: () => { fecharModal(); voltarAberto(l); } }, 'Desfazer pagamento')
+    : el('button', { class: 'btn primario', type: 'button', onclick: () => { fecharModal(); marcarPago(l); } }, receber ? 'Recebi' : 'Paguei');
+  const caixa = janela('div', d.descricao || '(sem descrição)', {},
+    el('div', { class: 'det-valor' + (receber ? ' pos' : '') }, (receber ? '+ ' : '') + brl(d.valor)),
+    el('p', { class: 'det-quando ' + estadoDe(l, hoje) }, prazoTexto(l, hoje)),
+    d.outroValor ? el('div', { class: 'split' },
+      el('div', {}, el('span', {}, 'Sua parte'), el('b', {}, brl(parteMinha(l)))),
+      el('div', {}, el('span', {}, d.outroNome), el('b', {}, brl(d.outroValor)))) : null,
+    el('dl', { class: 'info' }, info.map(([k, v]) => [el('dt', {}, k), el('dd', {}, v)])),
+    d.codigo ? el('div', { class: 'codigo' }, el('code', {}, d.codigo),
+      el('button', { class: 'btn', type: 'button', onclick: () => copiar(d.codigo) }, 'Copiar código')) : null,
+    el('div', { class: 'rodape' }, el('button', { class: 'btn', type: 'button', onclick: () => abrirForm('lancamentos', l) }, 'Editar'), btPagar));
+  abrirModal(caixa, btPagar);
 }
 
 // ---------- render ----------
 
-const formaNome = f => (FORMAS.find(x => x[0] === f) || [null, f])[1];
-
-function itemLanc(l, hoje, pago) {
-  const d = l.dados, n = dias(hoje, d.vencimento), receber = d.natureza === 'receber';
-  const estado = pago ? 'pago' : n < 0 ? 'atrasado' : n <= 2 ? 'perto' : '';
-  const dt = deIso(d.vencimento);
-  const prazo = pago ? null : el('span', { class: 'pill ' + (n < 0 ? 'vermelho' : n <= 2 ? 'ambar' : '') }, (n < 0 ? 'venceu ' : 'vence ') + quando(d.vencimento, hoje));
-  return el('article', { class: 'item ' + estado, 'data-id': l.id },
-    el('div', { class: 'data', 'aria-hidden': 'true' }, el('b', {}, pad(dt.getDate())), el('span', {}, MES[dt.getMonth()])),
-    el('div', { class: 'desc' },
-      el('h3', { class: 't' }, d.descricao || '(sem descrição)'),
-      el('div', { class: 'm' },
-        prazo,
-        receber ? el('span', { class: 'pill verde' }, 'a receber') : null,
-        d.forma ? el('span', {}, formaNome(d.forma)) : null,
-        d.categoria ? el('span', {}, d.categoria) : null,
-        d.recorrencia === 'mensal' ? el('span', {}, '↻ todo mês') : null,
-        pago ? el('span', {}, (receber ? 'recebido em ' : 'pago em ') + deIso(d.pagoEm || hoje).toLocaleDateString('pt-BR')) : null),
-      d.obs ? el('p', { class: 'obs' }, d.obs) : null),
-    el('div', { class: 'dir' },
-      el('span', { class: 'valor num' + (receber ? ' pos' : '') }, (receber ? '+ ' : '') + brl(d.valor)),
-      el('div', { class: 'bts' }, pago
-        ? [el('button', { class: 'btn peq', type: 'button', 'aria-label': 'Editar ' + (d.descricao || ''), onclick: () => abrirForm('lancamentos', l) }, 'Editar'),
-           el('button', { class: 'btn peq', type: 'button', onclick: () => aplicar(desfazer(st, l.id), 'Voltou para a lista') }, 'Desfazer')]
-        : [
-            d.codigo ? el('button', { class: 'btn peq', type: 'button', onclick: () => copiar(d.codigo) }, 'Copiar código') : null,
-            el('button', { class: 'btn peq', type: 'button', 'aria-label': 'Editar ' + (d.descricao || ''), onclick: () => abrirForm('lancamentos', l) }, 'Editar'),
-            el('button', { class: 'btn peq primario', type: 'button', onclick: () => marcarPago(l) }, receber ? 'Recebi' : 'Paguei')
-          ]))
-  );
+function linhaConta(l, hoje) {
+  const d = l.dados, receber = d.natureza === 'receber';
+  const nome = d.descricao || '(sem descrição)';
+  return el('li', { class: 'item ' + estadoDe(l, hoje) + (receber ? ' receber' : ''), 'data-id': l.id },
+    el('button', { class: 'check', type: 'button', 'aria-pressed': d.pago ? 'true' : 'false',
+      'aria-label': (d.pago ? 'Desfazer pagamento de ' : (receber ? 'Marcar como recebido: ' : 'Marcar como pago: ')) + nome,
+      onclick: () => d.pago ? voltarAberto(l) : marcarPago(l) }),
+    el('button', { class: 'abrir', type: 'button', 'aria-label': nome + ', ' + brl(d.valor) + ', ' + prazoTexto(l, hoje).toLowerCase() + '. Ver detalhes', onclick: () => abrirDetalhe(l) },
+      el('span', { class: 't' }, nome),
+      el('span', { class: 'v' }, (receber ? '+ ' : '') + brl(d.valor)),
+      el('span', { class: 'm' }, prazoTexto(l, hoje)),
+      d.outroValor ? el('span', { class: 'vs' }, 'seu ' + brl(parteMinha(l))) : el('span')));
 }
 
-function renderResumo(hoje) {
-  const r = resumo(st, hoje);
-  $('r-saldo').textContent = r.temContas ? brl(r.saldo) : '—';
-  $('r-saldo-sub').textContent = r.investido ? '+ ' + brl(r.investido) + ' investidos' : 'corrente, poupança e carteira';
-  $('r-pagar').textContent = brl(r.pagar30);
-  $('r-pagar-sub').textContent = r.nPagar30 ? r.nPagar30 + (r.nPagar30 > 1 ? ' contas' : ' conta') + ', com atrasadas' : 'nada a pagar';
-  $('r-atraso').textContent = brl(r.atrasado);
-  $('r-atraso').className = 'val num' + (r.nAtrasados ? ' neg' : '');
-  $('t-atraso').classList.toggle('alerta', r.nAtrasados > 0);
-  $('r-atraso-sub').textContent = r.nAtrasados ? r.nAtrasados + (r.nAtrasados > 1 ? ' contas vencidas' : ' conta vencida') : 'nada vencido';
-  $('r-sobra').textContent = r.temContas ? brl(r.sobra) : '—';
-  $('r-sobra').className = 'val num' + (!r.temContas ? '' : r.sobra < 0 ? ' neg' : ' pos');
-  $('r-sobra-sub').textContent = r.temContas ? 'saldo + a receber − a pagar' : 'cadastre suas contas';
-}
-
-function renderMeses(hoje) {
+function renderMes(hoje) {
   const linhas = porMes(st, hoje);
-  $('meses-box').hidden = !linhas.length;
-  $('meses').replaceChildren(...linhas.map(r => el('tr', { class: r.atual ? 'atual' : '' },
-    el('th', { scope: 'row' }, nomeMes(r.mes), r.atual ? el('span', { class: 'sub' }, ' atual') : null),
-    el('td', { 'data-rot': 'Faturas' }, brl(r.faturas)), el('td', { 'data-rot': 'Contas' }, brl(r.contas)),
-    el('td', { 'data-rot': 'Total', class: 'forte' }, brl(r.total)),
-    el('td', { 'data-rot': 'Pago', class: r.pago ? 'pos' : '' }, brl(r.pago)),
-    el('td', { 'data-rot': 'Falta', class: r.falta && r.mes < hoje.slice(0, 7) ? 'neg forte' : 'forte' }, brl(r.falta)))));
-}
+  const atual = mesDe(hoje);
+  if (!mesSel) mesSel = mesInicial(st, hoje);
+  // abas: meses com contas + o atual e os dois seguintes (dá para lançar adiantado) + o escolhido
+  const fixos = [0, 1, 2].map(n => mesDe(somaMeses(atual + '-01', n)));
+  const todos = [...new Set([...linhas.map(r => r.mes), ...fixos, mesSel])].sort()
+    .map(m => linhas.find(r => r.mes === m) || { mes: m, faltaSeu: 0, n: 0 });
+  const nav = $('meses');
+  nav.replaceChildren(...todos.map(r => el('button', {
+    class: 'mes' + (r.atrasado ? ' atrasado' : ''), type: 'button', 'aria-pressed': r.mes === mesSel ? 'true' : 'false', 'data-mes': r.mes,
+    onclick: () => { mesSel = r.mes; render(); }
+  }, el('b', {}, MES[Number(r.mes.slice(5)) - 1] + (r.mes.slice(0, 4) !== atual.slice(0, 4) ? ' ' + r.mes.slice(2, 4) : '')),
+     el('span', {}, !r.n ? '—' : r.faltaSeu ? brl(r.faltaSeu).replace(/,\d\d$/, '') : 'tudo pago'))));
+  const sel = nav.querySelector('[aria-pressed="true"]'); // rola só a faixa dos meses, nunca a página
+  if (sel && (sel.offsetLeft < nav.scrollLeft || sel.offsetLeft + sel.offsetWidth > nav.scrollLeft + nav.clientWidth)) nav.scrollLeft = sel.offsetLeft - 16;
 
-function renderVencimentos(hoje) {
-  const box = $('vencimentos');
-  const gs = grupos(st, hoje);
-  const nada = !st.lancamentos.length && !st.contas.length && !st.cartoes.length;
-  $('inicio').hidden = !nada;
-  if (!gs.length) {
-    box.replaceChildren(nada ? '' : el('div', { class: 'vazio' }, st.lancamentos.length ? 'Tudo pago. Nenhum vencimento em aberto.' : 'Nenhum vencimento cadastrado. Use “+ Conta a pagar”.'));
-  } else {
-    box.replaceChildren(...gs.map(g => el('div', { class: 'grupo ' + g.chave },
-      el('h3', { class: 'grupo-tit' }, el('span', {}, g.titulo, el('span', { class: 'qtd' }, ' · ' + g.itens.length)), el('span', { class: 'num' }, g.totalPagar ? brl(g.totalPagar) : '')),
-      g.itens.map(l => itemLanc(l, hoje, false)))));
+  const r = linhas.find(x => x.mes === mesSel);
+  const nomeM = mesLongo(mesSel) + (mesSel.slice(0, 4) !== atual.slice(0, 4) ? ' de ' + mesSel.slice(0, 4) : '');
+  const temOutros = r && r.outros.length;
+  $('h-rot').textContent = (temOutros ? 'Sua parte que falta pagar em ' : 'Falta pagar em ') + nomeM;
+  $('h-valor').textContent = brl(r ? r.faltaSeu : 0);
+  const pct = r && r.seu ? Math.round(r.pagoSeu / r.seu * 100) : 0;
+  $('h-barra').setAttribute('aria-valuenow', String(pct));
+  $('h-barra').firstElementChild.style.width = pct + '%';
+  $('h-sub').textContent = !r ? 'Nada lançado para ' + nomeM + '.'
+    : !r.faltaSeu ? 'Tudo pago em ' + nomeM + '.'
+    : brl(r.pagoSeu) + ' pago de ' + brl(r.seu) + ' · ' + r.nAbertos + (r.nAbertos > 1 ? ' contas em aberto' : ' conta em aberto');
+
+  const partes = [];
+  if (temOutros) {
+    partes.push(['Boletos em aberto', brl(r.falta)]);
+    for (const o of r.outros) partes.push(['Parte da ' + o.nome, brl(o.valor)]);
   }
-  const pagos = pagosRecentes(st, hoje);
-  $('pagos-box').hidden = !pagos.length;
-  $('pagos-tit').textContent = 'Pagos nos últimos 30 dias (' + pagos.length + ')';
-  $('pagos').replaceChildren(...pagos.map(l => itemLanc(l, hoje, true)));
+  const res = resumo(st, hoje);
+  if (res.temContas) {
+    const receberAberto = doMes(st, mesSel).filter(l => l.dados.natureza === 'receber' && !l.dados.pago).reduce((s, l) => s + l.dados.valor, 0);
+    partes.push(['Em conta hoje', brl(res.saldo)]);
+    const sobra = res.saldo + receberAberto - (r ? r.falta : 0);
+    partes.push(['Sobra depois de pagar', brl(sobra)]);
+  }
+  $('h-partes').replaceChildren(...partes.map(([k, v]) => el('div', { class: 'parte' }, el('span', {}, k), el('b', {}, v))));
+  $('h-partes').hidden = !partes.length;
+
+  const its = doMes(st, mesSel);
+  $('h-lista').textContent = 'Contas de ' + nomeM;
+  const nAb = its.filter(l => !l.dados.pago).length;
+  $('h-qtd').textContent = its.length ? (nAb ? nAb + ' em aberto' : 'todas pagas') : '';
+  $('lista').replaceChildren(...(its.length ? its.map(l => linhaConta(l, hoje))
+    : [el('li', { class: 'vazio' }, 'Nenhuma conta em ' + nomeM + '. Use “Lançar”.')]));
 }
 
-function renderLado(hoje) {
-  const velho = d => d && dias(d, hoje) > 7;
-  const atualizado = d => d ? el('span', { class: velho(d) ? 'pill ambar' : '' }, 'atualizado ' + quando(d, hoje)) : null;
-  const porNome = arr => [...arr].sort((a, b) => (a.dados.nome || '').localeCompare(b.dados.nome || '', 'pt-BR'));
-  const tipoNome = t => ({ corrente: 'corrente', poupanca: 'poupança', carteira: 'carteira', investimento: 'investimento' })[t] || t || '';
+function renderAtraso(hoje) {
+  const atrasadas = st.lancamentos.filter(l => !l.dados.pago && l.dados.natureza !== 'receber' && l.dados.vencimento < hoje)
+    .sort((a, b) => a.dados.vencimento.localeCompare(b.dados.vencimento));
+  $('aviso-atraso').hidden = !atrasadas.length;
+  if (!atrasadas.length) return;
+  const total = atrasadas.reduce((s, l) => s + l.dados.valor, 0);
+  $('atraso-txt').textContent = brl(total) + ' atrasado' + (atrasadas.length > 1 ? ' em ' + atrasadas.length + ' contas' : ': ' + atrasadas[0].dados.descricao);
+  const mes = mesDe(atrasadas[0].dados.vencimento);
+  $('bt-ver-atraso').hidden = mes === mesSel;
+  $('bt-ver-atraso').onclick = () => { mesSel = mes; render(); $('lista').querySelector('.atrasado .abrir')?.focus(); };
+}
 
-  $('contas').replaceChildren(...(st.contas.length ? porNome(st.contas).map(c => el('div', { class: 'linha', 'data-id': c.id },
-    el('h3', { class: 't' }, c.dados.nome),
-    el('span', { class: 'num forte' + (Number(c.dados.saldo) < 0 ? ' neg' : '') }, brl(c.dados.saldo)),
-    el('div', { class: 'm' }, el('span', {}, tipoNome(c.dados.tipo)), atualizado(c.dados.atualizadoEm)),
-    el('div', { class: 'acoes-linha' }, el('button', { class: 'btn peq', type: 'button', 'aria-label': 'Atualizar saldo de ' + c.dados.nome, onclick: () => abrirForm('contas', c) }, 'Atualizar saldo'))))
-    : [el('p', { class: 'linha m' }, 'Cadastre suas contas com o saldo que aparece no app do banco.')]));
+function renderBancos(hoje) {
+  const velho = d => d && dias(d, hoje) > 7;
+  const atualizado = d => d ? el('span', { class: velho(d) ? 'velho' : '' }, ' · atualizado ' + quando(d, hoje)) : null;
+  const porNome = arr => [...arr].sort((a, b) => (a.dados.nome || '').localeCompare(b.dados.nome || '', 'pt-BR'));
+  const tipoNome = t => (TIPOS_CONTA.find(x => x[0] === t) || [null, t || ''])[1];
 
   $('cartoes').replaceChildren(...(st.cartoes.length ? porNome(st.cartoes).map(c => {
     const d = c.dados, lim = Number(d.limite) || 0, livre = disponivel(st, c);
     const uso = lim ? Math.max(0, Math.min(100, Math.round((lim - livre) / lim * 100))) : 0;
-    const venc = d.diaVencimento ? proximoDia(d.diaVencimento, hoje) : null;
-    return el('div', { class: 'linha', 'data-id': c.id },
-      el('h3', { class: 't' }, d.nome),
-      el('span', { class: 'num forte' }, brl(d.fatura)),
-      el('div', { class: 'm' }, el('span', {}, 'fatura em aberto'), d.diaFechamento ? el('span', {}, 'fecha dia ' + d.diaFechamento) : null,
-        venc ? el('span', {}, 'vence ' + deIso(venc).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })) : null),
-      lim ? el('div', { class: 'barra', role: 'meter', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(uso), 'aria-label': 'Limite usado em ' + d.nome },
-        el('i', { class: uso >= 80 ? 'alto' : '', style: 'width:' + uso + '%' })) : null,
-      lim ? el('div', { class: 'm' }, el('span', { class: livre < 0 ? 'neg' : '' }, 'livre ' + brl(livre) + ' de ' + brl(lim)), atualizado(d.atualizadoEm)) : el('div', { class: 'm' }, atualizado(d.atualizadoEm)),
-      el('div', { class: 'acoes-linha' },
-        el('button', { class: 'btn peq', type: 'button', 'aria-label': 'Atualizar cartão ' + d.nome, onclick: () => abrirForm('cartoes', c) }, 'Atualizar'),
-        Number(d.fatura) > 0 ? el('button', { class: 'btn peq', type: 'button', onclick: () => lancarFatura(c) }, 'Fatura fechou: lançar') : null));
-  }) : [el('p', { class: 'linha m' }, 'Cadastre cartões com limite e dia de vencimento.')]));
+    return el('li', { 'data-id': c.id }, el('button', { class: 'linha', type: 'button', 'aria-label': 'Cartão ' + d.nome + (lim ? ', livre ' + brl(livre) : '') + '. Editar', onclick: () => abrirForm('cartoes', c) },
+      el('span', { class: 't' }, d.nome),
+      el('span', { class: 'v' + (livre < 0 ? ' neg' : '') }, lim ? 'livre ' + brl(livre) : ''),
+      lim ? el('span', { class: 'barra', 'aria-hidden': 'true' }, el('i', { class: uso >= 80 ? 'alto' : '', style: 'width:' + uso + '%' })) : null,
+      el('span', { class: 'm' }, 'fatura atual ' + brl(d.fatura),
+        d.diaFechamento ? ' · fecha dia ' + d.diaFechamento : '', d.diaVencimento ? ' · vence dia ' + d.diaVencimento : '',
+        lim ? ' · limite ' + brl(lim) : '', atualizado(d.atualizadoEm))));
+  }) : [el('li', { class: 'vazio' }, 'Nenhum cartão. Mande a fatura em PDF para o Claude ou use “+ Cartão”.')]));
+
+  const liquidas = st.contas.filter(c => c.dados.tipo !== 'investimento');
+  $('contas').replaceChildren(...(st.contas.length ? porNome(st.contas).map(c => el('li', { 'data-id': c.id },
+    el('button', { class: 'linha', type: 'button', 'aria-label': c.dados.nome + ', saldo ' + brl(c.dados.saldo) + '. Atualizar', onclick: () => abrirForm('contas', c) },
+      el('span', { class: 't' }, c.dados.nome),
+      el('span', { class: 'v' + (Number(c.dados.saldo) < 0 ? ' neg' : '') }, brl(c.dados.saldo)),
+      el('span', { class: 'm' }, tipoNome(c.dados.tipo), atualizado(c.dados.atualizadoEm)))))
+    : [el('li', { class: 'vazio' }, 'Cadastre o saldo que aparece no app do banco para ver quanto sobra no mês.')]));
+  if (liquidas.length > 1) $('contas').append(el('li', { class: 'vazio' }, 'Total em conta: ', el('b', {}, brl(resumo(st, hoje).saldo))));
 }
 
 const fmtData = s => new Date(s).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 function renderBackup() {
-  const pend = backupPendente(meta);
-  $('backup').classList.toggle('pendente', pend || !armazenamentoOk);
-  $('status').textContent = !armazenamentoOk ? 'O navegador não está salvando. Exporte o backup antes de fechar.'
-    : pend ? 'Há alterações fora do backup. Exporte e substitua o arquivo no Drive.'
-    : meta.exportadoEm ? 'Backup em dia · ' + fmtData(meta.exportadoEm)
-    : 'Os dados ficam só neste navegador. Guarde o backup no Drive.';
+  const pend = backupPendente(meta) || !armazenamentoOk;
+  const b = $('bt-backup');
+  b.classList.toggle('pendente', pend);
+  b.classList.toggle('ok', !pend && !!meta.exportadoEm);
+  $('backup-rot').textContent = pend ? 'Salvar backup' : meta.exportadoEm ? 'Backup em dia' : 'Backup';
 }
 
 function render() {
   const hoje = hojeIso();
   $('hoje').textContent = deIso(hoje).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-  renderResumo(hoje);
-  renderMeses(hoje);
-  renderVencimentos(hoje);
-  renderLado(hoje);
+  const nada = !COLECOES.some(n => st[n].length);
+  $('inicio').hidden = !nada;
+  for (const id of ['meses', 'hero', 'contas-mes', 'sec-cartoes', 'sec-contas']) $(id).hidden = nada;
+  if (nada) mesSel = null;
+  else renderMes(hoje);
+  renderAtraso(hoje);
+  renderBancos(hoje);
   renderBackup();
 }
 
-// ---------- backup: exportar / importar ----------
+// ---------- backup: baixar / abrir ----------
 
 function exportar() {
   const agora = new Date();
@@ -374,30 +468,41 @@ function exportar() {
   toast('Backup baixado. Suba no Drive substituindo o anterior.');
 }
 
+function abrirBackup(confirmacao) {
+  const pend = backupPendente(meta);
+  const status = !armazenamentoOk ? ['O navegador não está salvando', 'Baixe o backup antes de fechar a página.']
+    : pend ? ['Há alterações fora do backup', 'Baixe o backup e substitua o arquivo no Drive.']
+    : meta.exportadoEm ? ['Backup em dia', 'Último backup: ' + fmtData(meta.exportadoEm) + '.']
+    : ['Os dados ficam só neste navegador', 'Baixe o backup e guarde no Drive para abrir em outro lugar.'];
+  const btBaixar = el('button', { class: 'btn' + (pend || !meta.exportadoEm ? ' primario' : ''), type: 'button', onclick: () => { exportar(); fecharModal(); } }, 'Baixar backup');
+  const btAbrir = el('button', { class: 'btn', type: 'button', onclick: () => $('arquivo').click() }, 'Abrir backup…');
+  const caixa = janela('div', 'Backup', {},
+    el('p', { class: 'bk-status' }, el('b', {}, status[0]), status[1]),
+    confirmacao || null,
+    el('div', { class: 'rodape' }, btAbrir, btBaixar),
+    el('p', { class: 'bk-dica' }, 'Dica: também dá para arrastar o arquivo para a página.'));
+  abrirModal(caixa, confirmacao ? confirmacao.querySelector('button') : btBaixar);
+}
+
 function importarObjeto(obj) {
   let novo;
   try { novo = deBackup(obj); } catch (e) { toast(e.message); return; }
   const salvo = typeof obj.salvoEm === 'string' && !isNaN(Date.parse(obj.salvoEm)) ? obj.salvoEm : null;
   const c = contagem(novo);
   const efetivar = () => {
-    st = novo;
+    st = novo; mesSel = null;
     meta = { alteradoEm: salvo || new Date().toISOString(), exportadoEm: salvo || new Date().toISOString() };
-    gravarLocal(); render();
-    $('confirma').hidden = true;
-    toast('Backup importado: ' + c.lancamentos + ' lançamentos, ' + c.contas + ' contas, ' + c.cartoes + ' cartões');
+    gravarLocal(); fecharModal(); render();
+    toast('Backup aberto: ' + c.lancamentos + ' lançamentos, ' + c.contas + ' contas, ' + c.cartoes + ' cartões');
   };
-  const temDados = COLECOES.some(n => st[n].length);
-  if (!temDados) return efetivar();
+  if (!COLECOES.some(n => st[n].length)) return efetivar();
   const maisVelho = salvo && meta.alteradoEm && salvo < meta.alteradoEm;
-  const box = $('confirma');
-  box.replaceChildren(
-    el('p', {}, 'Substituir os dados deste navegador pelo backup' + (salvo ? ' de ' + fmtData(salvo) : '') + ' (' + c.lancamentos + ' lançamentos, ' + c.contas + ' contas, ' + c.cartoes + ' cartões)?',
+  abrirBackup(el('div', { class: 'confirma', role: 'alert' },
+    el('p', {}, 'Trocar os dados deste navegador pelo backup' + (salvo ? ' de ' + fmtData(salvo) : '') + ' (' + c.lancamentos + ' lançamentos, ' + c.contas + ' contas, ' + c.cartoes + ' cartões)?',
       maisVelho ? el('strong', { class: 'neg' }, ' Esse backup é mais antigo que as alterações feitas aqui; elas serão perdidas.') : null),
-    el('div', { class: 'acoes' },
-      el('button', { class: 'btn peq primario', type: 'button', onclick: efetivar }, 'Substituir'),
-      el('button', { class: 'btn peq', type: 'button', onclick: () => { box.hidden = true; } }, 'Cancelar')));
-  box.hidden = false;
-  box.querySelector('button').focus();
+    el('div', { class: 'rodape' },
+      el('button', { class: 'btn', type: 'button', onclick: () => abrirBackup() }, 'Cancelar'),
+      el('button', { class: 'btn primario', type: 'button', onclick: efetivar }, 'Trocar'))));
 }
 
 async function importarArquivo(f) {
@@ -408,24 +513,22 @@ async function importarArquivo(f) {
 
 // ---------- ligações ----------
 
-$('bt-novo').onclick = () => abrirForm('lancamentos', null, { natureza: 'pagar', forma: 'boleto', vencimento: hojeIso() });
-$('bt-receber').onclick = () => abrirForm('lancamentos', null, { natureza: 'receber', forma: 'pix', vencimento: hojeIso() });
+const novaConta = () => abrirForm('lancamentos', null, { natureza: 'pagar', forma: 'boleto', vencimento: hojeIso() });
+$('bt-novo').onclick = novaConta;
 $('bt-conta').onclick = () => abrirForm('contas');
 $('bt-cartao').onclick = () => abrirForm('cartoes');
-$('bt-exportar').onclick = exportar;
-$('bt-importar').onclick = () => $('arquivo').click();
+$('bt-backup').onclick = () => abrirBackup();
 $('arquivo').onchange = e => { const f = e.target.files[0]; e.target.value = ''; importarArquivo(f); };
 document.querySelectorAll('[data-acao="importar"]').forEach(b => { b.onclick = () => $('arquivo').click(); });
-document.querySelectorAll('[data-acao="conta"]').forEach(b => { b.onclick = () => abrirForm('contas'); });
-document.querySelectorAll('[data-acao="lancamento"]').forEach(b => { b.onclick = $('bt-novo').onclick; });
+document.querySelectorAll('[data-acao="lancamento"]').forEach(b => { b.onclick = novaConta; });
 
-// arrastar o backup pra dentro da página também importa
+// arrastar o backup pra dentro da página também abre
 addEventListener('dragover', e => { if ([...(e.dataTransfer?.types || [])].includes('Files')) e.preventDefault(); });
 addEventListener('drop', e => { const f = e.dataTransfer?.files?.[0]; if (f) { e.preventDefault(); importarArquivo(f); } });
 
 // outra aba alterou os dados → recarrega; voltar pra aba num outro dia → recalcula prazos
 addEventListener('storage', e => { if (e.key === CHAVE || e.key === CHAVE_META) { lerLocal(); render(); } });
-document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && !fecharAtual) render(); });
 // os dados já ficam no navegador; só avisa ao sair se ele recusou salvar
 addEventListener('beforeunload', e => { if (!armazenamentoOk) { e.preventDefault(); e.returnValue = ''; } });
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   parseValor, valorParaCampo, dias, somaMeses, proximoMes, proximoDia, quando, ehData,
   deBackup, paraBackup, backupPendente, vazio, adicionar, pagar, desfazer, fecharFatura,
-  resumo, grupos, porMes, disponivel, pagosRecentes, brl
+  resumo, grupos, porMes, disponivel, pagosRecentes, brl, parteMinha, doMes, mesInicial
 } from '../../js/logica.js';
 
 const HOJE = '2026-10-31';
@@ -200,4 +200,43 @@ test('adicionar não altera o estado original', () => {
   const novo = adicionar(st, 'contas', { nome: 'X', saldo: 1 }, 'id1');
   assert.equal(st.contas.length, 0);
   assert.equal(novo.contas[0].id, 'id1');
+});
+
+test('parte de outra pessoa: sua parte, soma por pessoa e validação no backup', () => {
+  const st = deBackup({ lancamentos: [
+    { id: 'cx', descricao: 'Fatura Caixa', valor: 2924.13, vencimento: '2026-11-10', forma: 'fatura', outroNome: ' Agatha ', outroValor: 2048.92 },
+    { id: 'am', descricao: 'Fatura Amazon', valor: 261.67, vencimento: '2026-11-05', forma: 'fatura' },
+    { id: 'lz', descricao: 'Luz', valor: 100, vencimento: '2026-11-20', outroValor: 500 },
+    { id: 'ag', descricao: 'Água', valor: 80, vencimento: '2026-11-21', outroValor: -5, outroNome: 'X' }
+  ] });
+  const [cx, , lz, ag] = st.lancamentos;
+  assert.equal(cx.dados.outroNome, 'Agatha');
+  assert.equal(parteMinha(cx), 875.21);
+  assert.equal(lz.dados.outroValor, 100, 'parte maior que o total vira o total');
+  assert.equal(lz.dados.outroNome, 'Outra pessoa');
+  assert.ok(!('outroValor' in ag.dados) && !('outroNome' in ag.dados), 'parte negativa é descartada');
+
+  const nov = porMes(st, HOJE).find(m => m.mes === '2026-11');
+  assert.equal(nov.total, 3365.8);
+  assert.equal(nov.seu, Math.round((875.21 + 261.67 + 0 + 80) * 100) / 100);
+  assert.deepEqual(nov.outros, [{ nome: 'Agatha', valor: 2048.92 }, { nome: 'Outra pessoa', valor: 100 }]);
+
+  const pago = pagar(st, 'cx', HOJE).st;
+  const nov2 = porMes(pago, HOJE).find(m => m.mes === '2026-11');
+  assert.equal(nov2.pagoSeu, 875.21);
+  assert.equal(nov2.faltaSeu, Math.round((261.67 + 80) * 100) / 100);
+  assert.deepEqual(doMes(pago, '2026-11').map(l => l.id), ['am', 'lz', 'ag', 'cx'], 'pagos vão para o fim');
+});
+
+test('mesInicial: próximo mês com conta em aberto; sem nada, o mês atual', () => {
+  assert.equal(mesInicial(vazio(), HOJE), '2026-10');
+  const st = estado({ lancamentos: [
+    lanc('a', { descricao: 'Velha', valor: 1, vencimento: '2026-08-01' }),
+    lanc('b', { descricao: 'Nov', valor: 1, vencimento: '2026-11-05' }),
+    lanc('r', { descricao: 'Recebe', valor: 1, vencimento: '2026-10-31', natureza: 'receber' })
+  ] });
+  assert.equal(mesInicial(st, HOJE), '2026-11', 'atraso não puxa a tela para trás; a receber não conta');
+  assert.deepEqual(porMes(st, HOJE).map(m => m.mes), ['2026-08', '2026-11'], 'mês com atraso entra na lista');
+  const pagoTudo = estado({ lancamentos: [lanc('p', { descricao: 'P', valor: 1, vencimento: '2026-12-01', pago: true })] });
+  assert.equal(mesInicial(pagoTudo, HOJE), '2026-10');
 });
