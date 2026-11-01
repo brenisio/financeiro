@@ -35,6 +35,14 @@ python3 ferramentas/fin.py resumo [--mes 2026-11]
 python3 ferramentas/fin.py fatura ... --outro-nome Agatha --outro-valor 2.048,92
 ```
 
+## Avisos do próprio site (app instalável)
+
+- `manifest.webmanifest` + `icones/` + `sw.js` (service worker módulo): instalável, abre sem internet (rede primeiro, cache como reserva).
+- A página espelha o estado no IndexedDB (`js/avisos.js`); o SW, no `periodicsync` "contas" (Chrome/Android com o app instalado,
+  o navegador decide a frequência), roda `avisoDoDia` (logica.js) e mostra um aviso por dia: contas a pagar que vencem em até 2 dias ou atrasadas.
+- Sem servidor não há push garantido: no iPhone e no Firefox só funciona com a página aberta. O .ics do Google Agenda é o reforço.
+- Teste real do SW: `tests/ui/site.spec.js`, bloco "app instalável" (Chromium completo, dispara o periodic sync via CDP).
+
 ## Lembretes (Google Agenda)
 
 `python3 ferramentas/fin.py agenda` gera `dados/financeiro-lembretes.ics` (o site faz o mesmo em Backup → "Baixar lembretes").

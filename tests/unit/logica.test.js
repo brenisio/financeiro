@@ -261,3 +261,21 @@ test('agenda .ics: abertos com lembrete, pagos sem, texto escapado e linhas curt
   assert.equal((eventos[1].match(/BEGIN:VALARM/g) || []).length, 2);
   for (const linha of ics.split('\r\n')) assert.ok(new TextEncoder().encode(linha).length <= 75, linha);
 });
+
+test('aviso do dia: junta atrasadas e as que vencem em até 2 dias, só a pagar', async () => {
+  const { avisoDoDia } = await import('../../js/logica.js');
+  assert.equal(avisoDoDia(vazio(), HOJE), null);
+  const st = deBackup({ lancamentos: [
+    { id: 'a', descricao: 'Fatura Caixa', valor: 2924.13, vencimento: '2026-11-02', outroNome: 'Agatha', outroValor: 2048.92 },
+    { id: 'b', descricao: 'Aluguel', valor: 1800, vencimento: '2026-11-05' },
+    { id: 'c', descricao: 'Freela', valor: 500, vencimento: '2026-10-31', natureza: 'receber' },
+    { id: 'd', descricao: 'Pago', valor: 1, vencimento: '2026-10-31', pago: true }
+  ] });
+  assert.deepEqual(avisoDoDia(st, HOJE), { titulo: 'Fatura Caixa vence em 2 dias', corpo: 'Fatura Caixa: vence em 2 dias · R$ 2.924,13 (seu R$ 875,21)', tag: 'contas-2026-10-31', n: 1 });
+  assert.equal(avisoDoDia(st, '2026-11-01').titulo, 'Fatura Caixa vence amanhã');
+  const dia5 = avisoDoDia(st, '2026-11-05');
+  assert.equal(dia5.titulo, 'Fatura Caixa está atrasada');
+  assert.equal(dia5.corpo, 'Fatura Caixa: atrasada há 3 dias · R$ 2.924,13 (seu R$ 875,21)\nAluguel: vence hoje · R$ 1.800,00');
+  const dois = deBackup({ lancamentos: [{ descricao: 'Luz', valor: 90, vencimento: '2026-11-04' }, { descricao: 'Água', valor: 60, vencimento: '2026-11-05' }] });
+  assert.equal(avisoDoDia(dois, '2026-11-04').titulo, '2 contas vencendo');
+});

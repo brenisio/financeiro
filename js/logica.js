@@ -305,3 +305,19 @@ export function paraIcs(st, hoje, agora = new Date()) {
   linhas.push('END:VCALENDAR');
   return linhas.map(icsDobra).join('\r\n') + '\r\n';
 }
+
+// ---------- aviso do dia (notificação do app) ----------
+
+/** Um aviso por dia, juntando as contas a pagar que vencem em até 2 dias ou já venceram. null = nada a avisar. */
+export function avisoDoDia(st, hoje) {
+  const its = abertos(st).filter(l => ehPagar(l) && dias(hoje, l.dados.vencimento) <= 2);
+  if (!its.length) return null;
+  const prazo = l => { const n = dias(hoje, l.dados.vencimento); return n < 0 ? 'atrasada ' + quando(l.dados.vencimento, hoje) : n === 0 ? 'vence hoje' : n === 1 ? 'vence amanhã' : 'vence em 2 dias'; };
+  const valor = l => brl(l.dados.valor) + (l.dados.outroValor ? ' (seu ' + brl(parteMinha(l)) + ')' : '');
+  const atrasadas = its.filter(l => l.dados.vencimento < hoje);
+  const titulo = atrasadas.length
+    ? (atrasadas.length > 1 ? atrasadas.length + ' contas atrasadas' : (atrasadas[0].dados.descricao || 'Conta') + ' está atrasada')
+    : its.length > 1 ? its.length + ' contas vencendo' : (its[0].dados.descricao || 'Conta') + ' ' + prazo(its[0]);
+  const corpo = its.map(l => (l.dados.descricao || 'Conta') + ': ' + prazo(l) + ' · ' + valor(l)).join('\n');
+  return { titulo, corpo, tag: 'contas-' + hoje, n: its.length };
+}

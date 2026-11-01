@@ -4,6 +4,7 @@ import {
   deBackup, paraBackup, contagem, backupPendente, vazio, adicionar, atualizar, remover, pagar, desfazer,
   fecharFatura, resumo, porMes, somaMeses, doMes, mesInicial, parteMinha, disponivel, dias, ehData, mesDe, paraIcs
 } from './logica.js';
+import { gravar as gravarIdb, avisarSePreciso } from './avisos.js';
 
 const CHAVE = 'financeiro-breno.v1', CHAVE_META = 'financeiro-breno.meta';
 const $ = id => document.getElementById(id);
@@ -57,7 +58,74 @@ function gravarLocal() {
     localStorage.setItem(CHAVE_META, JSON.stringify(meta));
     armazenamentoOk = true;
   } catch { armazenamentoOk = false; }
+  espelhar();
   return armazenamentoOk;
+}
+// cópia no IndexedDB para o service worker conferir as contas com o app fechado
+function espelhar() { if (globalThis.indexedDB) gravarIdb('estado', paraBackup(st)).catch(() => {}); }
+
+// ---------- avisos (notificações) ----------
+
+let pedidoInstalar = null; // evento do Chrome para instalar o app
+const temNotificacao = () => 'Notification' in globalThis;
+async function syncPeriodico() {
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    if (!reg?.periodicSync) return false;
+    const p = await navigator.permissions.query({ name: 'periodic-background-sync' });
+    if (p.state !== 'granted') return false;
+    await reg.periodicSync.register('contas', { minInterval: 6 * 60 * 60 * 1000 });
+    return true;
+  } catch { return false; }
+}
+async function mostrarNotificacao(titulo, opcoes) {
+  const reg = await navigator.serviceWorker?.getRegistration().catch(() => null);
+  if (reg) return reg.showNotification(titulo, opcoes);
+  new Notification(titulo, opcoes); // sem service worker: só enquanto a página está aberta
+}
+async function ativarAvisos() {
+  if (!temNotificacao()) return toast('Este navegador não mostra notificações.');
+  const r = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+  if (r !== 'granted') { toast('Avisos não liberados. Dá para liberar nas configurações do site.'); renderAvisos(); return; }
+  const fundo = await syncPeriodico();
+  toast(fundo ? 'Avisos ligados. O app confere suas contas algumas vezes por dia.' : 'Avisos ligados. Instale o app para ser avisado com ele fechado.');
+  renderAvisos();
+}
+async function testarAviso() {
+  const aviso = await avisarSePreciso(mostrarNotificacao, { forcar: true }).catch(() => null);
+  if (!aviso) await mostrarNotificacao('Avisos funcionando', { body: 'Nenhuma conta vencendo nos próximos 2 dias.', tag: 'teste', icon: 'icones/192.png' });
+}
+/** Texto e botões do bloco de avisos (na janela de backup) e do convite na tela principal */
+async function situacaoAvisos() {
+  if (!temNotificacao()) return { estado: 'sem', texto: 'Este navegador não mostra notificações. Use o Chrome no Android.' };
+  if (Notification.permission === 'denied') return { estado: 'negado', texto: 'Avisos bloqueados. Libere as notificações nas configurações deste site.' };
+  if (Notification.permission === 'default') return { estado: 'desligado', texto: 'Receba um aviso 2 dias antes, no dia e enquanto a conta estiver atrasada.' };
+  if (await syncPeriodico()) return { estado: 'ligado', texto: 'Avisos ligados: o app confere suas contas algumas vezes por dia, mesmo fechado.' };
+  return { estado: 'parcial', texto: 'Avisos liberados, mas só funcionam com o site fechado depois de instalar como app (Chrome no Android: menu ⋮ → Instalar app).' };
+}
+async function renderAvisos() {
+  const s = await situacaoAvisos();
+  let dispensado = false;
+  try { dispensado = localStorage.getItem('financeiro-breno.convite-avisos') === '1'; } catch {}
+  const nada = !COLECOES.some(n => st[n].length);
+  $('convite-avisos').hidden = nada || dispensado || s.estado !== 'desligado';
+  const bloco = document.getElementById('bloco-avisos');
+  if (!bloco) return;
+  bloco.replaceChildren(
+    el('h3', {}, 'Avisos neste aparelho'),
+    el('p', { class: 'bk-dica', id: 'avisos-texto' }, s.texto),
+    el('div', { class: 'rodape' },
+      s.estado === 'desligado' ? el('button', { class: 'btn primario', type: 'button', onclick: ativarAvisos }, 'Ativar avisos') : null,
+      pedidoInstalar && s.estado !== 'sem' ? el('button', { class: 'btn', type: 'button', onclick: instalar }, 'Instalar app') : null,
+      s.estado === 'ligado' || s.estado === 'parcial' ? el('button', { class: 'btn', type: 'button', onclick: testarAviso }, 'Testar aviso') : null));
+}
+async function instalar() {
+  if (!pedidoInstalar) return;
+  pedidoInstalar.prompt();
+  await pedidoInstalar.userChoice.catch(() => null);
+  pedidoInstalar = null;
+  await syncPeriodico();
+  renderAvisos();
 }
 function aplicar(novo, msg, acao) {
   st = novo;
@@ -452,6 +520,7 @@ function render() {
   renderAtraso(hoje);
   renderBancos(hoje);
   renderBackup();
+  renderAvisos();
 }
 
 // ---------- backup: baixar / abrir ----------
@@ -482,16 +551,18 @@ function abrirBackup(confirmacao) {
     : ['Os dados ficam só neste navegador', 'Baixe o backup e guarde no Drive para abrir em outro lugar.'];
   const btBaixar = el('button', { class: 'btn' + (pend || !meta.exportadoEm ? ' primario' : ''), type: 'button', onclick: () => { exportar(); fecharModal(); } }, 'Baixar backup');
   const btAbrir = el('button', { class: 'btn', type: 'button', onclick: () => $('arquivo').click() }, 'Abrir backup…');
-  const caixa = janela('div', 'Backup e lembretes', {},
+  const caixa = janela('div', 'Backup e avisos', {},
     el('p', { class: 'bk-status' }, el('b', {}, status[0]), status[1]),
     confirmacao || null,
     el('div', { class: 'rodape' }, btAbrir, btBaixar),
     el('p', { class: 'bk-dica' }, 'Dica: também dá para arrastar o arquivo para a página.'),
+    el('div', { class: 'lembretes', id: 'bloco-avisos' }),
     el('div', { class: 'lembretes' },
-      el('h3', {}, 'Lembretes no celular e no e-mail'),
+      el('h3', {}, 'Lembretes pelo Google Agenda (e-mail)'),
       el('p', { class: 'bk-dica' }, 'Baixe o arquivo e importe no Google Agenda (no computador: Configurações → Importar). Cada conta vira um evento no vencimento, com aviso 2 dias antes e no dia, às 9h. Importar de novo atualiza.'),
       el('button', { class: 'btn', type: 'button', disabled: !st.lancamentos.length, onclick: () => { baixarAgenda(); fecharModal(); } }, 'Baixar lembretes (.ics)')));
   abrirModal(caixa, confirmacao ? confirmacao.querySelector('button') : btBaixar);
+  renderAvisos();
 }
 
 function importarObjeto(obj) {
@@ -542,6 +613,14 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && !f
 // os dados já ficam no navegador; só avisa ao sair se ele recusou salvar
 addEventListener('beforeunload', e => { if (!armazenamentoOk) { e.preventDefault(); e.returnValue = ''; } });
 
+// app instalável: service worker (sem internet + avisos com o app fechado)
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { type: 'module' }).then(() => renderAvisos()).catch(() => {});
+addEventListener('beforeinstallprompt', e => { e.preventDefault(); pedidoInstalar = e; renderAvisos(); });
+addEventListener('appinstalled', () => { pedidoInstalar = null; syncPeriodico().then(renderAvisos); });
+$('bt-ativar-avisos').onclick = ativarAvisos;
+$('bt-dispensar-avisos').onclick = () => { try { localStorage.setItem('financeiro-breno.convite-avisos', '1'); } catch {} $('convite-avisos').hidden = true; };
+
 lerLocal();
+espelhar();
 render();
 document.documentElement.dataset.pronto = '1';

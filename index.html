@@ -7,6 +7,8 @@
 <meta name="theme-color" content="#f4f3ef" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0f1312" media="(prefers-color-scheme: dark)">
 <title>Financeiro Breno</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icones/180.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%2317614f'/%3E%3Cpath d='M10 16.5l4 4 8-9' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -81,6 +83,13 @@ button { font: inherit; color: inherit; cursor: pointer; -webkit-tap-highlight-c
 .aviso { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 10px 10px 14px; border-radius: 14px;
   background: var(--danger-soft); color: var(--danger); font-weight: 600; font-size: 14px; }
 .aviso .btn { min-height: 38px; border-color: transparent; color: var(--danger); }
+
+/* convite para ligar os avisos */
+.convite { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 8px 12px 16px; border-radius: 16px;
+  background: var(--accent-soft); font-size: 14px; }
+.convite b { display: block; font-size: 15px; }
+.convite .bts { display: flex; align-items: center; gap: 4px; flex: none; }
+@media (max-width: 480px) { .convite { flex-direction: column; align-items: stretch; } .convite .bts { justify-content: space-between; } }
 
 /* começo */
 .inicio { background: var(--surface); border-radius: 20px; padding: 24px 20px; box-shadow: var(--sombra); display: grid; gap: 14px; text-align: center; justify-items: center; }
@@ -250,6 +259,11 @@ details.mais[open] summary { margin-bottom: 8px; }
     </div>
     <button class="chip" id="bt-backup" type="button" aria-haspopup="dialog"><span class="ponto" aria-hidden="true"></span><span id="backup-rot">Backup</span></button>
   </header>
+
+  <div class="convite" id="convite-avisos" hidden>
+    <p><b>Quer ser avisado das contas?</b> O app avisa 2 dias antes e no dia do vencimento.</p>
+    <div class="bts"><button class="btn primario" id="bt-ativar-avisos" type="button">Ativar avisos</button><button class="btn-icone" id="bt-dispensar-avisos" type="button" aria-label="Agora não">×</button></div>
+  </div>
 
   <div class="aviso" id="aviso-atraso" role="status" hidden><span id="atraso-txt"></span><button class="btn" id="bt-ver-atraso" type="button">Ver</button></div>
 

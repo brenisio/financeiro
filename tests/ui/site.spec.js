@@ -294,7 +294,7 @@ test('backup: baixar e abrir de novo dá o mesmo resultado', async ({ page }) =>
 test('lembretes: baixa o .ics para o Google Agenda', async ({ page }) => {
   await abrirComDados(page);
   await page.locator('#bt-backup').click();
-  await expect(modal(page).locator('h2')).toHaveText('Backup e lembretes');
+  await expect(modal(page).locator('h2')).toHaveText('Backup e avisos');
   const [download] = await Promise.all([page.waitForEvent('download'), modal(page).getByRole('button', { name: 'Baixar lembretes (.ics)' }).click()]);
   expect(download.suggestedFilename()).toBe('financeiro-lembretes.ics');
   const partes = await (await download.createReadStream()).toArray();
@@ -378,3 +378,100 @@ for (const esquema of ['light', 'dark']) {
     expect(form.violations.map(v => v.id + ': ' + v.nodes.map(n => n.target).join(' | '))).toEqual([]);
   });
 }
+
+// ---------- avisos (notificações) ----------
+
+// Notification de mentira: registra o que seria mostrado e devolve a permissão pedida
+const fingeNotificacao = (page, permissao, resposta = permissao) => page.addInitScript(([p, r]) => {
+  window.__avisos = [];
+  const N = function (titulo, opcoes) { window.__avisos.push([titulo, opcoes && opcoes.body]); };
+  N.permission = p;
+  N.requestPermission = async () => { N.permission = r; return r; };
+  window.Notification = N;
+}, [permissao, resposta]);
+
+test('convite para ligar os avisos: ativa, e "agora não" fica lembrado', async ({ page }) => {
+  await fingeNotificacao(page, 'default', 'granted');
+  await abrirComDados(page);
+  await expect(page.locator('#convite-avisos')).toBeVisible();
+  const axe = await new AxeBuilder({ page }).include('#convite-avisos').withTags(['wcag2a', 'wcag2aa']).analyze();
+  expect(axe.violations.map(v => v.id)).toEqual([]);
+  await page.locator('#bt-ativar-avisos').click();
+  await expect(page.locator('#toast')).toContainText('Avisos ligados');
+  await expect(page.locator('#convite-avisos')).toBeHidden();
+});
+
+test('convite some com "agora não", mesmo recarregando', async ({ page }) => {
+  await fingeNotificacao(page, 'default');
+  await abrirComDados(page);
+  await page.getByRole('button', { name: 'Agora não' }).click();
+  await expect(page.locator('#convite-avisos')).toBeHidden();
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-pronto', '1');
+  await expect(page.locator('#lista .item').first()).toBeVisible();
+  await expect(page.locator('#convite-avisos')).toBeHidden();
+});
+
+test('avisos negados explicam como liberar', async ({ page }) => {
+  await fingeNotificacao(page, 'denied');
+  await abrirComDados(page);
+  await expect(page.locator('#convite-avisos')).toBeHidden();
+  await page.locator('#bt-backup').click();
+  await expect(modal(page).locator('#avisos-texto')).toContainText('Avisos bloqueados');
+});
+
+test('testar aviso mostra as contas que vencem (sem service worker: só com a página aberta)', async ({ page }) => {
+  await fingeNotificacao(page, 'granted');
+  await abrirComDados(page);
+  await page.locator('#bt-backup').click();
+  await expect(modal(page).locator('#avisos-texto')).toContainText('instalar como app');
+  await modal(page).getByRole('button', { name: 'Testar aviso' }).click();
+  await expect.poll(() => page.evaluate(() => window.__avisos)).toEqual([['Claro está atrasada', 'Claro: atrasada há 11 dias · R$ 129,90']]);
+});
+
+test.describe('app instalável (service worker de verdade)', () => {
+  // notificação a partir do service worker não funciona no "headless shell"; aqui sobe o Chromium completo
+  let navegador, context, page;
+  test.beforeEach(async ({ playwright, browserName, isMobile }) => {
+    test.skip(browserName !== 'chromium' || isMobile, 'service worker module + periodic sync: Chrome (roda uma vez, no desktop)');
+    navegador = await playwright.chromium.launch({ channel: 'chromium' });
+    context = await navegador.newContext({ serviceWorkers: 'allow', baseURL: 'http://127.0.0.1:8797/', timezoneId: 'America/Sao_Paulo', locale: 'pt-BR' });
+    await context.grantPermissions(['notifications'], { origin: 'http://127.0.0.1:8797' });
+    page = await context.newPage();
+  });
+  test.afterEach(async () => { await navegador?.close(); });
+
+  test('abre sem internet e avisa em segundo plano, uma vez por dia', async () => {
+    await page.goto('/');
+    await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
+    await page.reload(); // passa a ser controlada pelo service worker
+    await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
+    await importar(page);
+    await expect(page.locator('#toast')).toContainText('Backup aberto');
+    await expect(page.locator('#convite-avisos')).toBeHidden(); // já liberado
+
+    // o service worker lê o espelho no IndexedDB e mostra a notificação
+    const titulos = () => page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map(n => n.title));
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('ServiceWorker.enable');
+    const ids = [];
+    cdp.on('ServiceWorker.workerRegistrationUpdated', e => e.registrations.forEach(r => ids.push(r.registrationId)));
+    await expect.poll(() => ids.length).toBeGreaterThan(0);
+    const origem = new URL(page.url()).origin;
+    await cdp.send('ServiceWorker.dispatchPeriodicSyncEvent', { origin: origem, registrationId: ids[0], tag: 'contas', lastChance: false });
+    await expect.poll(titulos).toEqual(['Claro está atrasada']);
+
+    // segundo disparo no mesmo dia não repete
+    await page.evaluate(async () => (await navigator.serviceWorker.ready).getNotifications().then(ns => ns.forEach(n => n.close())));
+    await cdp.send('ServiceWorker.dispatchPeriodicSyncEvent', { origin: origem, registrationId: ids[0], tag: 'contas', lastChance: false });
+    await page.waitForTimeout(500);
+    expect(await titulos()).toEqual([]);
+
+    // sem internet o app ainda abre, com os dados
+    await context.setOffline(true);
+    await page.reload();
+    await expect(page.locator('html')).toHaveAttribute('data-pronto', '1');
+    await expect(page.locator('#lista .item')).toHaveCount(2);
+    await context.setOffline(false);
+  });
+});
