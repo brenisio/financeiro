@@ -271,6 +271,23 @@ test('conta bancária: atualizar saldo, inclusive negativo', async ({ page }) =>
   await expect(page.locator('#contas [data-id="c1"] .v')).toHaveClass(/neg/);
 });
 
+test('contas agrupadas por banco, com subtotal e total geral', async ({ page }) => {
+  await abrirComDados(page);
+  await expect(page.locator('#contas-total')).toContainText('R$ 13.000,00');
+  await expect(page.locator('#contas-total')).toContainText('em conta R$ 3.000,00 · investido R$ 10.000,00');
+  await page.locator('#contas [data-id="c2"] .linha').click();
+  await modal(page).getByLabel('Banco').fill('Itaú');
+  await modal(page).getByRole('button', { name: 'Salvar' }).click();
+  await page.locator('#contas [data-id="c1"] .linha').click();
+  await modal(page).getByLabel('Banco').fill('Itaú');
+  await modal(page).getByRole('button', { name: 'Salvar' }).click();
+  const grupo = page.locator('#contas .banco');
+  await expect(grupo).toHaveCount(1);
+  await expect(grupo.locator('.banco-nome')).toHaveText('Itaú');
+  await expect(grupo.locator('.banco-total')).toHaveText('R$ 13.000,00');
+  await expect(grupo.locator('[data-id]')).toHaveCount(2);
+});
+
 test('backup: baixar e abrir de novo dá o mesmo resultado', async ({ page }) => {
   await abrirComDados(page);
   await item(page, 'l1').locator('.check').click();

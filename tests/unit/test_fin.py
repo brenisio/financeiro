@@ -165,6 +165,19 @@ class TestComandos(Base):
         self.assertIn('Faturas de cartão: R$ 2.120,10', out)
         self.assertIn('Contas: R$ 1.800,00', out)
 
+    def test_saldo_com_banco_e_resumo_por_banco(self):
+        self.ok('saldo', '--conta', 'Mercado Pago', '--valor', '30.976,02', '--banco', 'Mercado Pago')
+        self.ok('saldo', '--conta', 'Cofrinho 140%', '--valor', '2.130,97', '--tipo', 'investimento', '--banco', 'mercado pago')
+        self.ok('saldo', '--conta', 'Caixinha', '--valor', '5.998,94', '--tipo', 'investimento', '--banco', 'Nubank')
+        self.ok('saldo', '--conta', 'Caixinha', '--valor', '6.000')  # sem --banco mantém o banco
+        self.assertEqual(self.dados()['contas'][2]['banco'], 'Nubank')
+        out = self.ok('resumo', '--mes', '2026-11')
+        self.assertIn('Total: R$ 39.106,99 (em conta R$ 30.976,02 · investido R$ 8.130,97)', out)
+        self.assertIn('  Mercado Pago: R$ 33.106,99', out)
+        self.assertIn('    Cofrinho 140%: R$ 2.130,97 (investimento', out)
+        self.assertIn('  Nubank: R$ 6.000,00', out)
+        self.assertLess(out.index('Mercado Pago: R$ 33'), out.index('Nubank: R$ 6'))
+
 
 if __name__ == '__main__':
     unittest.main()

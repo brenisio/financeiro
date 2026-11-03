@@ -195,6 +195,25 @@ export function resumo(st, hoje) {
   };
 }
 
+/** Quanto tem em cada banco (contas + investimentos), do maior para o menor, e o total. Sem banco, vale o nome da conta. */
+export function porBanco(st) {
+  const mapa = new Map(), val = c => Number(c.dados.saldo) || 0;
+  for (const c of st.contas) {
+    const banco = String(c.dados.banco || '').trim() || String(c.dados.nome || '').trim() || 'Sem nome';
+    const k = sem(banco);
+    if (!mapa.has(k)) mapa.set(k, { banco, total: 0, contas: [] });
+    const g = mapa.get(k);
+    g.total = centavos(g.total + val(c));
+    g.contas.push(c);
+  }
+  const somar = cs => centavos(cs.reduce((s, c) => s + val(c), 0));
+  const inv = st.contas.filter(c => c.dados.tipo === 'investimento');
+  return {
+    total: somar(st.contas), emConta: somar(st.contas.filter(c => c.dados.tipo !== 'investimento')), investido: somar(inv),
+    bancos: [...mapa.values()].sort((a, b) => b.total - a.total || a.banco.localeCompare(b.banco))
+  };
+}
+
 export function grupos(st, hoje) {
   const g7 = somaDias(hoje, 7), g30 = somaDias(hoje, 30);
   const ab = abertos(st);

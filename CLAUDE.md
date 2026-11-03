@@ -28,7 +28,7 @@ e a conta por descrição + mês) e guarda uma cópia em `dados/historico/` ante
 python3 ferramentas/fin.py fatura --cartao "Nubank" --valor 1.234,56 --vencimento 10/11/2026 \
     --fechamento 03/11/2026 --minimo 185,19 --limite 8000 --codigo "<linha digitável>"
 python3 ferramentas/fin.py conta  --descricao "Aluguel" --valor 1800 --vencimento 05/11/2026 --categoria Moradia --mensal
-python3 ferramentas/fin.py saldo  --conta "Itaú corrente" --valor 2350
+python3 ferramentas/fin.py saldo  --conta "Cofrinho 120% CDI" --valor 2350 --tipo investimento --banco "Mercado Pago"
 python3 ferramentas/fin.py pago   --descricao "Aluguel" [--mes 2026-11] [--em 05/11/2026]
 python3 ferramentas/fin.py resumo [--mes 2026-11]
 # parte de outra pessoa no mesmo boleto (ex.: cartão adicional da Agatha), em fatura ou conta:

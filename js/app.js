@@ -2,7 +2,7 @@
 import {
   COLECOES, MES, FORMAS, TIPOS_CONTA, deIso, hojeIso, quando, pad, brl, parseValor, valorParaCampo,
   deBackup, paraBackup, contagem, backupPendente, vazio, adicionar, atualizar, remover, pagar, desfazer,
-  fecharFatura, resumo, porMes, somaMeses, doMes, mesInicial, parteMinha, disponivel, dias, ehData, mesDe, paraIcs
+  fecharFatura, resumo, porBanco, porMes, somaMeses, doMes, mesInicial, parteMinha, disponivel, dias, ehData, mesDe, paraIcs
 } from './logica.js';
 import { gravar as gravarIdb, avisarSePreciso } from './avisos.js';
 
@@ -201,7 +201,8 @@ const ESPECS = {
     { k: 'obs', l: 'Observação', t: 'textarea', mais: 1 }
   ] },
   contas: { nome: 'conta bancária', campos: [
-    { k: 'nome', l: 'Banco / conta', t: 'text', req: 1, ph: 'Ex.: Itaú corrente' },
+    { k: 'nome', l: 'Nome da conta', t: 'text', req: 1, ph: 'Ex.: Cofrinho 120% CDI' },
+    { k: 'banco', l: 'Banco', t: 'text', ph: 'Ex.: Mercado Pago' },
     { k: 'saldo', l: 'Saldo atual (R$)', t: 'money', req: 1, ph: '2.350,00', neg: 1, meia: 1 },
     { k: 'tipo', l: 'Tipo', t: 'select', o: TIPOS_CONTA, meia: 1 }
   ] },
@@ -491,14 +492,21 @@ function renderBancos(hoje) {
         lim ? ' · limite ' + brl(lim) : '', atualizado(d.atualizadoEm))));
   }) : [el('li', { class: 'vazio' }, 'Nenhum cartão. Mande a fatura em PDF para o Claude ou use “+ Cartão”.')]));
 
-  const liquidas = st.contas.filter(c => c.dados.tipo !== 'investimento');
-  $('contas').replaceChildren(...(st.contas.length ? porNome(st.contas).map(c => el('li', { 'data-id': c.id },
+  const linhaConta = c => el('li', { 'data-id': c.id },
     el('button', { class: 'linha', type: 'button', 'aria-label': c.dados.nome + ', saldo ' + brl(c.dados.saldo) + '. Atualizar', onclick: () => abrirForm('contas', c) },
       el('span', { class: 't' }, c.dados.nome),
       el('span', { class: 'v' + (Number(c.dados.saldo) < 0 ? ' neg' : '') }, brl(c.dados.saldo)),
-      el('span', { class: 'm' }, tipoNome(c.dados.tipo), atualizado(c.dados.atualizadoEm)))))
+      el('span', { class: 'm' }, tipoNome(c.dados.tipo), atualizado(c.dados.atualizadoEm))));
+  const pb = porBanco(st);
+  $('contas-total').hidden = !st.contas.length;
+  $('contas-total').replaceChildren(el('span', {}, 'Total '), el('b', {}, brl(pb.total)),
+    el('span', { class: 'm' }, 'em conta ' + brl(pb.emConta) + ' · investido ' + brl(pb.investido)));
+  $('contas').replaceChildren(...(st.contas.length ? pb.bancos.map(g =>
+    g.contas.length === 1 && (g.contas[0].dados.nome || '').trim() === g.banco ? linhaConta(g.contas[0])
+      : el('li', { class: 'banco' },
+        el('div', { class: 'banco-topo' }, el('span', { class: 'banco-nome' }, g.banco), el('span', { class: 'banco-total' + (g.total < 0 ? ' neg' : '') }, brl(g.total))),
+        el('ul', { class: 'banco-contas' }, ...porNome(g.contas).map(linhaConta))))
     : [el('li', { class: 'vazio' }, 'Cadastre o saldo que aparece no app do banco para ver quanto sobra no mês.')]));
-  if (liquidas.length > 1) $('contas').append(el('li', { class: 'vazio' }, 'Total em conta: ', el('b', {}, brl(resumo(st, hoje).saldo))));
 }
 
 const fmtData = s => new Date(s).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });

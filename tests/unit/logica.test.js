@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   parseValor, valorParaCampo, dias, somaMeses, proximoMes, proximoDia, quando, ehData,
   deBackup, paraBackup, backupPendente, vazio, adicionar, pagar, desfazer, fecharFatura,
-  resumo, grupos, porMes, disponivel, pagosRecentes, brl, parteMinha, doMes, mesInicial
+  resumo, porBanco, grupos, porMes, disponivel, pagosRecentes, brl, parteMinha, doMes, mesInicial
 } from '../../js/logica.js';
 
 const HOJE = '2026-10-31';
@@ -278,4 +278,21 @@ test('aviso do dia: junta atrasadas e as que vencem em até 2 dias, só a pagar'
   assert.equal(dia5.corpo, 'Fatura Caixa: atrasada há 3 dias · R$ 2.924,13 (seu R$ 875,21)\nAluguel: vence hoje · R$ 1.800,00');
   const dois = deBackup({ lancamentos: [{ descricao: 'Luz', valor: 90, vencimento: '2026-11-04' }, { descricao: 'Água', valor: 60, vencimento: '2026-11-05' }] });
   assert.equal(avisoDoDia(dois, '2026-11-04').titulo, '2 contas vencendo');
+});
+
+test('por banco: soma o que tem em cada banco (conta + investimentos) e o total', () => {
+  const c = (id, dados) => ({ id, dados });
+  const st = estado({ contas: [
+    c('a', { nome: 'Mercado Pago', banco: 'Mercado Pago', tipo: 'corrente', saldo: 30976.02 }),
+    c('b', { nome: 'Cofrinho 140%', banco: ' mercado pago ', tipo: 'investimento', saldo: 2130.97 }),
+    c('c', { nome: 'Caixinha', banco: 'Nubank', tipo: 'investimento', saldo: 5998.94 }),
+    c('d', { nome: 'Itaú corrente', tipo: 'corrente', saldo: -100 }) // sem banco: usa o nome
+  ] });
+  const r = porBanco(st);
+  assert.equal(r.total, 38_000.0 + 1005.93);
+  assert.equal(r.emConta, 30876.02);
+  assert.equal(r.investido, 8129.91);
+  assert.deepEqual(r.bancos.map(b => [b.banco, b.total, b.contas.map(x => x.id)]),
+    [['Mercado Pago', 33106.99, ['a', 'b']], ['Nubank', 5998.94, ['c']], ['Itaú corrente', -100, ['d']]]);
+  assert.deepEqual(porBanco(vazio()), { total: 0, emConta: 0, investido: 0, bancos: [] });
 });

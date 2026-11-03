@@ -251,6 +251,8 @@ def cmd_saldo(d, a):
         d['contas'].append(c)
     elif a.tipo:
         c['tipo'] = a.tipo
+    if a.banco and a.banco.strip():
+        c['banco'] = a.banco.strip()
     c['saldo'] = valor(a.valor, negativo=True)
     c['atualizadoEm'] = hoje()
     print(f'Saldo {c["nome"]}: {brl(c["saldo"])}.')
@@ -298,12 +300,27 @@ def meses_padrao():
     return out
 
 
+def por_banco(contas):
+    """Mesmo agrupamento de porBanco (logica.js): banco (ou nome), do maior para o menor saldo."""
+    grupos = {}
+    for c in contas:
+        banco = str(c.get('banco') or '').strip() or str(c.get('nome') or '').strip() or 'Sem nome'
+        g = grupos.setdefault(norm(banco), {'banco': banco, 'total': 0, 'contas': []})
+        g['total'] = round(g['total'] + (c.get('saldo') or 0), 2)
+        g['contas'].append(c)
+    return sorted(grupos.values(), key=lambda g: (-g['total'], g['banco']))
+
+
 def cmd_resumo(d, a):
     h = hoje()
-    contas_liq = [c for c in d['contas'] if c.get('tipo') != 'investimento']
-    saldo = sum(c.get('saldo') or 0 for c in contas_liq)
+    soma = lambda cs: round(sum(c.get('saldo') or 0 for c in cs), 2)
+    inv = [c for c in d['contas'] if c.get('tipo') == 'investimento']
     print(f'Backup salvo em {d.get("salvoEm") or "—"}')
-    print(f'Saldo em conta: {brl(saldo)}' + ''.join(f'\n  {c["nome"]}: {brl(c.get("saldo") or 0)} (atualizado {c.get("atualizadoEm", "?")})' for c in contas_liq))
+    print(f'Total: {brl(soma(d["contas"]))} (em conta {brl(soma(d["contas"]) - soma(inv))} · investido {brl(soma(inv))})')
+    for g in por_banco(d['contas']):
+        print(f'  {g["banco"]}: {brl(g["total"])}')
+        for c in g['contas']:
+            print(f'    {c["nome"]}: {brl(c.get("saldo") or 0)} ({c.get("tipo", "corrente")}, atualizado {c.get("atualizadoEm", "?")})')
     atrasados = [x for x in d['lancamentos'] if not x.get('pago') and x.get('natureza', 'pagar') == 'pagar' and str(x.get('vencimento', '')) < h]
     if atrasados:
         print(f'\nATRASADOS: {brl(sum(x["valor"] for x in atrasados))}')
@@ -440,6 +457,7 @@ def main(argv=None):
     s.add_argument('--conta', required=True)
     s.add_argument('--valor', required=True)
     s.add_argument('--tipo', choices=('corrente', 'poupanca', 'carteira', 'investimento'))
+    s.add_argument('--banco', help='banco onde está (agrupa contas e investimentos no resumo)')
 
     s = sub.add_parser('pago', help='marca um lançamento em aberto como pago')
     g = s.add_mutually_exclusive_group(required=True)
