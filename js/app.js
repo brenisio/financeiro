@@ -362,7 +362,8 @@ function prazoTexto(l, hoje) {
   const d = l.dados;
   if (d.pago) return (d.natureza === 'receber' ? 'Recebido em ' : 'Pago em ') + dataCurta(d.pagoEm || hoje);
   const n = dias(hoje, d.vencimento);
-  return (n < 0 ? 'Venceu ' : 'Vence ') + dataCurta(d.vencimento) + ' · ' + quando(d.vencimento, hoje);
+  const rot = d.natureza === 'receber' ? (n < 0 ? 'Devia ter caído ' : 'Cai ') : (n < 0 ? 'Venceu ' : 'Vence ');
+  return rot + dataCurta(d.vencimento) + ' · ' + quando(d.vencimento, hoje);
 }
 
 function abrirDetalhe(l) {
@@ -373,7 +374,7 @@ function abrirDetalhe(l) {
     d.forma ? ['Forma', formaNome(d.forma) + (cartao ? ' · ' + cartao.dados.nome : '')] : null,
     d.categoria ? ['Categoria', d.categoria] : null,
     d.recorrencia === 'mensal' ? ['Repete', 'Todo mês'] : null,
-    ['Vencimento', dataLonga(d.vencimento)],
+    [receber ? 'Previsto para' : 'Vencimento', dataLonga(d.vencimento)],
     d.obs ? ['Observação', d.obs] : null
   ].filter(Boolean);
   const btPagar = d.pago

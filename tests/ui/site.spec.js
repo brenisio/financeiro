@@ -195,7 +195,11 @@ test('a receber pelo seletor do formulário', async ({ page }) => {
   const linha = page.locator('#lista .item', { hasText: 'Reembolso Agatha' });
   await expect(linha).toHaveClass(/receber/);
   await expect(linha).toContainText('+ R$ 300,00');
+  await expect(linha).toContainText('Cai 12/11 · em 12 dias'); // receita não "vence"
   await expect(page.locator('#h-valor')).toHaveText('R$ 2.800,00'); // a receber não mexe no que falta pagar
+  await linha.locator('.abrir').click();
+  await expect(modal(page)).toContainText('Previsto para');
+  await expect(modal(page)).not.toContainText('Vencimento');
 });
 
 test('editar e excluir (com confirmação em dois toques)', async ({ page }) => {
