@@ -296,3 +296,40 @@ test('por banco: soma o que tem em cada banco (conta + investimentos) e o total'
     [['Mercado Pago', 33106.99, ['a', 'b']], ['Nubank', 5998.94, ['c']], ['Itaú corrente', -100, ['d']]]);
   assert.deepEqual(porBanco(vazio()), { total: 0, emConta: 0, investido: 0, bancos: [] });
 });
+
+test('receber credita a conta corrente e desfazer tira o crédito', () => {
+  const contas = [
+    { id: 'inv', dados: { nome: 'Cofrinho', tipo: 'investimento', saldo: 1000 } },
+    { id: 'mp', dados: { nome: 'Mercado Pago', tipo: 'corrente', saldo: 500.1 } }];
+  let st = estado({ contas, lancamentos: [
+    lanc('sal', { descricao: 'Salário', valor: 5511, vencimento: '2026-11-05', natureza: 'receber', recorrencia: 'mensal' }),
+    lanc('luz', { descricao: 'Luz', valor: 100, vencimento: '2026-11-10' })] });
+  const r = pagar(st, 'sal', '2026-11-05', 'prox');
+  st = r.st;
+  assert.equal(st.contas.find(c => c.id === 'mp').dados.saldo, 6011.1);
+  assert.equal(st.contas.find(c => c.id === 'mp').dados.atualizadoEm, '2026-11-05');
+  assert.equal(st.contas.find(c => c.id === 'inv').dados.saldo, 1000);
+  assert.equal(st.lancamentos.find(l => l.id === 'sal').dados.creditadoEm, 'mp');
+  assert.deepEqual(r.credito, { contaId: 'mp', nome: 'Mercado Pago', valor: 5511 });
+  assert.equal(st.lancamentos.find(l => l.id === 'prox').dados.creditadoEm, undefined);
+  assert.equal(resumo(st, '2026-11-05').saldo, 6011.1);
+  // pagar conta não mexe no saldo (só o recebido entra)
+  st = pagar(st, 'luz', '2026-11-05').st;
+  assert.equal(st.contas.find(c => c.id === 'mp').dados.saldo, 6011.1);
+  st = desfazer(st, 'sal');
+  assert.equal(st.contas.find(c => c.id === 'mp').dados.saldo, 500.1);
+  assert.equal(st.lancamentos.find(l => l.id === 'sal').dados.creditadoEm, undefined);
+});
+
+test('receber sem conta corrente só marca recebido', () => {
+  let st = estado({ contas: [{ id: 'inv', dados: { nome: 'Cofrinho', tipo: 'investimento', saldo: 10 } }],
+    lancamentos: [lanc('x', { descricao: 'Bolsa', valor: 700, vencimento: '2026-11-05', natureza: 'receber' })] });
+  const r = pagar(st, 'x', '2026-11-05');
+  assert.equal(r.credito, null);
+  assert.equal(r.st.contas[0].dados.saldo, 10);
+  assert.equal(r.st.lancamentos[0].dados.pago, true);
+  // conta escolhida no lançamento tem prioridade
+  st = estado({ contas: [{ id: 'a', dados: { nome: 'A', tipo: 'corrente', saldo: 0 } }, { id: 'b', dados: { nome: 'B', tipo: 'corrente', saldo: 0 } }],
+    lancamentos: [lanc('y', { descricao: 'Pix', valor: 50, vencimento: '2026-11-05', natureza: 'receber', contaId: 'b' })] });
+  assert.equal(pagar(st, 'y', '2026-11-05').st.contas.find(c => c.id === 'b').dados.saldo, 50);
+});

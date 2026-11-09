@@ -130,6 +130,28 @@ class TestComandos(Base):
         self.assertEqual(pagos, ['MEI'])
         self.falha('pago', '--descricao', 'inexistente')
 
+    def test_receber_credita_a_conta(self):
+        self.ok('saldo', '--conta', 'Cofrinho', '--valor', '1000', '--tipo', 'investimento')
+        self.ok('saldo', '--conta', 'Mercado Pago', '--valor', '500,10')
+        self.ok('conta', '--descricao', 'Salário', '--valor', '5.511', '--vencimento', '05/11/2026', '--receber', '--mensal')
+        self.ok('conta', '--descricao', 'Luz', '--valor', '100', '--vencimento', '10/11/2026')
+        self.ok('pago', '--descricao', 'Salário')
+        self.ok('pago', '--descricao', 'Luz')
+        d = self.dados()
+        saldos = {c['nome']: c['saldo'] for c in d['contas']}
+        self.assertEqual(saldos, {'Cofrinho': 1000, 'Mercado Pago': 6011.1})
+        sal = [x for x in d['lancamentos'] if x['descricao'] == 'Salário']
+        mp = next(c for c in d['contas'] if c['nome'] == 'Mercado Pago')
+        self.assertEqual([x.get('creditadoEm') for x in sal], [mp['id'], None])
+
+    def test_receber_em_conta_escolhida(self):
+        self.ok('saldo', '--conta', 'A', '--valor', '0')
+        self.ok('saldo', '--conta', 'B', '--valor', '0')
+        self.ok('conta', '--descricao', 'Pix', '--valor', '50', '--vencimento', '05/11/2026', '--receber')
+        self.falha('pago', '--descricao', 'Pix', '--conta', 'inexistente')
+        self.ok('pago', '--descricao', 'Pix', '--conta', 'b')
+        self.assertEqual({c['nome']: c['saldo'] for c in self.dados()['contas']}, {'A': 0, 'B': 50})
+
     def test_saldo_aceita_negativo(self):
         self.ok('saldo', '--conta', 'Itaú', '--valor', '-120,50')
         self.ok('saldo', '--conta', 'itaú', '--valor', '2.350,00')

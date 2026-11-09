@@ -125,11 +125,27 @@ export function remover(st, colecao, id) {
   return { ...st, [colecao]: st[colecao].filter(i => i.id !== id) };
 }
 
-/** Marca pago; se for mensal, cria o do mês seguinte (uma vez só). Devolve { st, proximo } */
+/** Conta onde cai um recebimento: a escolhida no lançamento, senão a primeira corrente, senão qualquer uma que não seja investimento */
+export function contaDestino(st, l) {
+  const liquidas = st.contas.filter(c => c.dados.tipo !== 'investimento');
+  return liquidas.find(c => c.id === l.dados.contaId) || liquidas.find(c => (c.dados.tipo || 'corrente') === 'corrente') || liquidas[0] || null;
+}
+const mexerSaldo = (st, contaId, delta, hoje) => {
+  const c = st.contas.find(i => i.id === contaId);
+  if (!c) return st;
+  const extra = hoje ? { atualizadoEm: hoje } : {};
+  return atualizar(st, 'contas', contaId, { saldo: centavos((Number(c.dados.saldo) || 0) + delta), ...extra });
+};
+
+/** Marca pago; se for mensal, cria o do mês seguinte (uma vez só). Recebimento entra no saldo da conta.
+ *  Devolve { st, proximo, credito } — credito = { contaId, nome, valor } ou null */
 export function pagar(st, id, hoje, idNovo = novoId()) {
   const l = st.lancamentos.find(i => i.id === id);
-  if (!l || l.dados.pago) return { st, proximo: null };
-  let novo = atualizar(st, 'lancamentos', id, { pago: true, pagoEm: hoje });
+  if (!l || l.dados.pago) return { st, proximo: null, credito: null };
+  const destino = l.dados.natureza === 'receber' ? contaDestino(st, l) : null;
+  let novo = atualizar(st, 'lancamentos', id, { pago: true, pagoEm: hoje, ...(destino ? { creditadoEm: destino.id } : {}) });
+  const credito = destino ? { contaId: destino.id, nome: destino.dados.nome, valor: centavos(l.dados.valor) } : null;
+  if (destino) novo = mexerSaldo(novo, destino.id, credito.valor, hoje);
   let proximo = null;
   if (l.dados.recorrencia === 'mensal' && !st.lancamentos.some(i => i.dados.origem === id)) {
     const diaBase = l.dados.diaBase || Number(l.dados.vencimento.slice(8));
@@ -143,12 +159,16 @@ export function pagar(st, id, hoje, idNovo = novoId()) {
       novo = adicionar(novo, 'lancamentos', proximo, idNovo);
     }
   }
-  return { st: novo, proximo };
+  return { st: novo, proximo, credito };
 }
 /** Desfaz o pagamento. O lançamento do mês seguinte criado por ele sai, se ainda estiver intocado (não pago, mesmo valor). */
 export function desfazer(st, id) {
   const l = st.lancamentos.find(i => i.id === id);
   let novo = atualizar(st, 'lancamentos', id, { pago: false, pagoEm: null });
+  if (l?.dados.creditadoEm) {
+    novo = mexerSaldo(novo, l.dados.creditadoEm, -centavos(l.dados.valor));
+    novo = { ...novo, lancamentos: troca(novo.lancamentos, id, ({ creditadoEm, ...d }) => d) };
+  }
   const gerado = novo.lancamentos.find(i => i.dados.origem === id && !i.dados.pago);
   if (gerado && l && gerado.dados.valor === l.dados.valor && !gerado.dados.codigo) novo = remover(novo, 'lancamentos', gerado.id);
   return novo;

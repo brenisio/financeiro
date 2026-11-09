@@ -336,7 +336,8 @@ function abrirForm(colecao, item, padrao) {
 function marcarPago(l) {
   const r = pagar(st, l.id, hojeIso());
   const receber = l.dados.natureza === 'receber';
-  const txt = (receber ? 'Recebido' : 'Pago') + (r.proximo ? '. O de ' + mesLongo(r.proximo.vencimento) + ' já está na lista.' : '');
+  const txt = (receber ? 'Recebido' : 'Pago') + (r.credito ? ': +' + brl(r.credito.valor) + ' em ' + r.credito.nome : '')
+    + (r.proximo ? '. O de ' + mesLongo(r.proximo.vencimento) + ' já está na lista.' : '');
   aplicar(r.st, txt, { rot: 'Desfazer', fn: () => aplicar(desfazer(st, l.id), 'Voltou para a lista') });
 }
 function voltarAberto(l) { aplicar(desfazer(st, l.id), 'Voltou para a lista'); }

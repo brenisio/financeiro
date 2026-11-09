@@ -275,8 +275,24 @@ def cmd_pago(d, a):
     if len({x['descricao'] for x in alvo}) > 1:
         raise Erro('Mais de um lançamento combina: ' + '; '.join(f'{x["descricao"]} ({x["vencimento"]}, id {x["id"]})' for x in alvo))
     l = alvo[0]
+    destino = None
+    if l.get('natureza') == 'receber':
+        liquidas = [c for c in d['contas'] if c.get('tipo') != 'investimento']
+        if a.conta:
+            destino = achar(liquidas, a.conta)
+            if not destino:
+                raise Erro(f'Conta "{a.conta}" não encontrada (investimento não recebe).')
+        else:
+            destino = next((c for c in liquidas if c.get('id') == l.get('contaId')), None) \
+                or next((c for c in liquidas if (c.get('tipo') or 'corrente') == 'corrente'), None) \
+                or (liquidas[0] if liquidas else None)
     l['pago'], l['pagoEm'] = True, data(a.em) if a.em else hoje()
-    print(f'{l["descricao"]} ({l["vencimento"]}) marcado como pago em {l["pagoEm"]}.')
+    print(f'{l["descricao"]} ({l["vencimento"]}) marcado como {"recebido" if l.get("natureza") == "receber" else "pago"} em {l["pagoEm"]}.')
+    if destino:
+        destino['saldo'] = round((destino.get('saldo') or 0) + (l.get('valor') or 0), 2)
+        destino['atualizadoEm'] = l['pagoEm']
+        l['creditadoEm'] = destino['id']
+        print(f'+{brl(l.get("valor") or 0)} em {destino["nome"]}: saldo {brl(destino["saldo"])}.')
     if l.get('recorrencia') == 'mensal' and not any(x.get('origem') == l['id'] for x in d['lancamentos']):
         dia_base = l.get('diaBase') or int(l['vencimento'][8:])
         venc = proximo_mes(l['vencimento'], dia_base)
@@ -286,7 +302,8 @@ def cmd_pago(d, a):
             ja['origem'] = l['id']
             print(f'O de {venc[5:7]}/{venc[:4]} já estava lançado.')
         else:
-            d['lancamentos'].append({**l, 'id': novo_id(), 'vencimento': venc, 'diaBase': dia_base, 'pago': False,
+            prox = {k: v for k, v in l.items() if k != 'creditadoEm'}
+            d['lancamentos'].append({**prox, 'id': novo_id(), 'vencimento': venc, 'diaBase': dia_base, 'pago': False,
                                      'pagoEm': None, 'origem': l['id'], 'codigo': ''})
             print(f'Próximo criado para {venc}.')
 
@@ -465,6 +482,7 @@ def main(argv=None):
     g.add_argument('--id')
     s.add_argument('--mes', help='AAAA-MM, se houver mais de um mês em aberto')
     s.add_argument('--em', help='data do pagamento (padrão: hoje)')
+    s.add_argument('--conta', help='conta onde o recebimento entra (padrão: a conta corrente)')
 
     s = sub.add_parser('resumo', help='soma faturas e contas por mês')
     s.add_argument('--mes', help='AAAA-MM')

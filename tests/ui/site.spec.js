@@ -100,6 +100,18 @@ test('novembro separa a sua parte da parte da Agatha', async ({ page }) => {
   await expect(page.locator('#lista .atrasado .abrir')).toBeFocused();
 });
 
+test('recebido entra no "Em conta hoje" e Desfazer tira', async ({ page }) => {
+  await abrirComDados(page);
+  await aba(page, '2026-11').click();
+  const partes = page.locator('#h-partes');
+  await item(page, 'l4').locator('.check').click();
+  await expect(page.locator('#toast')).toContainText('Recebido: +R$ 500,00 em');
+  await expect(partes).toContainText('Em conta hojeR$ 3.500,00');
+  await expect(partes).toContainText('Sobra depois de pagarR$ 400,00'); // o dinheiro só mudou de lugar
+  await page.locator('#toast button', { hasText: 'Desfazer' }).click();
+  await expect(partes).toContainText('Em conta hojeR$ 3.000,00');
+});
+
 test('marcar como pago pelo círculo, com Desfazer no aviso', async ({ page }) => {
   await abrirComDados(page);
   await item(page, 'l1').locator('.check').click();
