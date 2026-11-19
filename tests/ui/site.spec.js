@@ -214,6 +214,39 @@ test('a receber pelo seletor do formulário', async ({ page }) => {
   await expect(modal(page)).not.toContainText('Vencimento');
 });
 
+test('lembrete: entra pelo seletor, aparece na ordem das datas com a tag e não soma', async ({ page }) => {
+  await abrirComDados(page);
+  await page.locator('#bt-novo').click();
+  let f = modal(page);
+  await f.getByLabel('Descrição').fill('Cancelar Uber One');
+  await f.getByLabel('Vencimento').fill('2026-11-07');
+  await f.getByText('Lembrete', { exact: true }).click();
+  f = modal(page);
+  await expect(f.locator('h2')).toHaveText('Novo lembrete');
+  await expect(f.getByLabel('O que fazer')).toHaveValue('Cancelar Uber One'); // leva o que já foi digitado
+  await expect(f.getByLabel('Até quando')).toHaveValue('2026-11-07');
+  await expect(f.getByLabel('Valor (R$)')).toHaveCount(0);
+  await f.getByRole('button', { name: 'Salvar' }).click();
+  await expect(modal(page)).toHaveCount(0);
+  await expect(aba(page, '2026-11')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#h-lista')).toHaveText('Contas e lembretes de novembro');
+  const ids = await page.locator('#lista .item').evaluateAll(es => es.map(e => e.classList.contains('lembrete') ? 'L' : e.dataset.id));
+  expect(ids).toEqual(['l2', 'L', 'l3', 'l4']); // 05/11, 07/11, 10/11, 15/11
+  const linha = page.locator('#lista .item.lembrete');
+  await expect(linha).toContainText('Lembrete');
+  await expect(linha).toContainText('Até 07/11 · em 7 dias');
+  await expect(page.locator('#h-valor')).toHaveText('R$ 2.800,00'); // não mexe no que falta pagar
+  await linha.locator('.check').click();
+  await expect(page.locator('#toast')).toContainText('Feito');
+  await expect(page.locator('#lista .item.lembrete')).toHaveClass(/pago/);
+  await expect(page.locator('#lista .item').last()).toHaveClass(/lembrete/); // feito vai pro fim
+  await page.locator('#lista .item.lembrete .abrir').click();
+  await expect(modal(page)).toContainText('Feito em 31/10');
+  await modal(page).getByRole('button', { name: 'Editar' }).click();
+  await expect(modal(page).locator('h2')).toHaveText('Editar lembrete');
+  await expect(modal(page).getByText('A pagar', { exact: true })).toHaveCount(0); // ao editar não troca de tipo
+});
+
 test('editar e excluir (com confirmação em dois toques)', async ({ page }) => {
   await abrirComDados(page);
   await item(page, 'l1').locator('.abrir').click();

@@ -255,7 +255,7 @@ test('agenda .ics: abertos com lembrete, pagos sem, texto escapado e linhas curt
   const desdobrado = ics.replace(/\r\n /g, '');
   assert.match(desdobrado, /UID:cx@financeiro-breno\r\nDTSTAMP:20261031T130000Z\r\nDTSTART;VALUE=DATE:20261110\r\nDTEND;VALUE=DATE:20261111/);
   assert.match(desdobrado, /SUMMARY:Pagar: Fatura Caixa · R\$ 2\.924\\,13 \(sua parte R\$ 875\\,21\)/);
-  assert.match(desdobrado, /mínimo R\$ 438\\,62\; fechou 30\/10/);
+  assert.match(desdobrado, /mínimo R\$ 438\\,62\\; fechou 30\/10/);
   assert.match(desdobrado, /SUMMARY:Pago: MEI/);
   assert.equal((eventos[0].match(/BEGIN:VALARM/g) || []).length, 0, 'MEI pago: sem lembrete');
   assert.equal((eventos[1].match(/BEGIN:VALARM/g) || []).length, 2);
@@ -332,4 +332,39 @@ test('receber sem conta corrente só marca recebido', () => {
   st = estado({ contas: [{ id: 'a', dados: { nome: 'A', tipo: 'corrente', saldo: 0 } }, { id: 'b', dados: { nome: 'B', tipo: 'corrente', saldo: 0 } }],
     lancamentos: [lanc('y', { descricao: 'Pix', valor: 50, vencimento: '2026-11-05', natureza: 'receber', contaId: 'b' })] });
   assert.equal(pagar(st, 'y', '2026-11-05').st.contas.find(c => c.id === 'b').dados.saldo, 50);
+});
+
+test('lembretes: sem valor, misturados por data na lista do mês e fora das somas', async () => {
+  const { agendaDoMes, marcarFeito, desmarcarFeito, avisoDoDia, paraIcs } = await import('../../js/logica.js');
+  assert.throws(() => deBackup({ lembretes: [{ descricao: 'Sem data' }] }), /lembrete “Sem data” sem data válida/);
+  const st = deBackup({
+    lancamentos: [{ id: 'al', descricao: 'Aluguel', valor: 1800, vencimento: '2026-11-05', pago: true, pagoEm: '2026-11-05' }, { id: 'cl', descricao: 'Claro', valor: 100, vencimento: '2026-11-25' }],
+    lembretes: [{ id: 'ub', descricao: 'Cancelar Uber One', data: '2026-11-20', obs: 'antes da renovação' }, { id: 'dz', descricao: 'Renovar CNH', data: '2027-01-10' }]
+  });
+  assert.equal(st.lembretes[0].dados.feito, false);
+  assert.deepEqual(agendaDoMes(st, '2026-11').map(x => [x.item.id, x.lembrete]), [['ub', true], ['cl', false], ['al', false]]);
+  const m = porMes(st, HOJE);
+  const nov = m.find(r => r.mes === '2026-11');
+  assert.equal(nov.total, 1900, 'lembrete não soma');
+  assert.equal(nov.nLembretes, 1);
+  assert.ok(m.some(r => r.mes === '2027-01' && r.n === 0 && r.nLembretes === 1), 'mês só com lembrete ganha aba');
+  const feito = marcarFeito(st, 'ub', '2026-11-18');
+  assert.deepEqual(agendaDoMes(feito, '2026-11').map(x => x.item.id), ['cl', 'al', 'ub'], 'feito vai pro fim');
+  assert.equal(desmarcarFeito(feito, 'ub').lembretes[0].dados.feito, false);
+  assert.deepEqual(paraBackup(st).lembretes[0], { id: 'ub', descricao: 'Cancelar Uber One', data: '2026-11-20', obs: 'antes da renovação', feito: false });
+
+  // aviso do dia: só lembrete, e junto com conta
+  assert.equal(avisoDoDia(st, '2026-11-17'), null);
+  assert.deepEqual(avisoDoDia(st, '2026-11-18'), { titulo: 'Cancelar Uber One · em 2 dias', corpo: 'Lembrete: Cancelar Uber One · em 2 dias', tag: 'contas-2026-11-18', n: 1 });
+  assert.equal(avisoDoDia(st, '2026-11-20').titulo, 'Cancelar Uber One · até hoje');
+  const junto = avisoDoDia(st, '2026-11-23');
+  assert.equal(junto.titulo, 'Claro vence em 2 dias + 1 lembrete');
+  assert.equal(junto.corpo, 'Claro: vence em 2 dias · R$ 100,00\nLembrete: Cancelar Uber One · passou há 3 dias');
+  assert.equal(avisoDoDia(feito, '2026-11-20'), null);
+
+  // .ics: lembrete com alarme; feito sem
+  const ics = paraIcs(st, HOJE, new Date('2026-10-31T13:00:00Z')).replace(/\r\n /g, '');
+  assert.match(ics, /UID:ub@financeiro-breno\r\nDTSTAMP:20261031T130000Z\r\nDTSTART;VALUE=DATE:20261120\r\nDTEND;VALUE=DATE:20261121\r\nSUMMARY:Lembrete: Cancelar Uber One\r\nDESCRIPTION:antes da renovação\\nhttps/);
+  assert.match(paraIcs(feito, HOJE, new Date()), /SUMMARY:Feito: Cancelar Uber One/);
+  assert.equal((paraIcs(feito, HOJE, new Date()).match(/BEGIN:VALARM/g) || []).length, 3 * 2 - 2, 'feito sem alarme');
 });

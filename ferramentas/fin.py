@@ -9,6 +9,8 @@ Exemplos:
   fin.py conta --descricao "Aluguel" --valor 1800 --vencimento 05/11/2026 --categoria Moradia --mensal
   fin.py saldo --conta "Itaú corrente" --valor 2350,00
   fin.py pago --descricao "Aluguel" --em 05/11/2026
+  fin.py lembrete --descricao "Cancelar Uber One" --data 25/11/2026
+  fin.py feito --descricao "Cancelar Uber One"
   fin.py resumo            # mês atual e próximos 2
   fin.py resumo --mes 2026-11
 """
@@ -28,7 +30,7 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
 ARQUIVO_PADRAO = RAIZ / 'dados' / 'financeiro-backup.json'
-COLECOES = ('lancamentos', 'contas', 'cartoes')
+COLECOES = ('lancamentos', 'contas', 'cartoes', 'lembretes')
 FORMAS = ('boleto', 'pix', 'debito', 'fatura', 'transferencia', 'outro')
 
 
@@ -308,6 +310,43 @@ def cmd_pago(d, a):
             print(f'Próximo criado para {venc}.')
 
 
+def cmd_lembrete(d, a):
+    """Lembrete sem valor ("cancelar Uber One até 25/11"): mesmo nome no mesmo mês atualiza em vez de duplicar."""
+    dia = data(a.data)
+    if not norm(a.descricao):
+        raise Erro('Informe a descrição.')
+    x = next((x for x in d['lembretes'] if norm(x.get('descricao')) == norm(a.descricao) and str(x.get('data', ''))[:7] == dia[:7]), None)
+    novo = {'descricao': a.descricao.strip(), 'data': dia}
+    if a.obs is not None:
+        novo['obs'] = a.obs
+    if x:
+        x.update(novo)
+        print(f'Lembrete "{novo["descricao"]}" atualizado: até {dia}.')
+    else:
+        d['lembretes'].append({'id': novo_id(), 'obs': '', **novo, 'feito': False, 'feitoEm': None})
+        print(f'Lembrete "{novo["descricao"]}" criado: até {dia}.')
+
+
+def cmd_feito(d, a):
+    abertos = [x for x in d['lembretes'] if not x.get('feito')]
+    if a.id:
+        alvo = [x for x in abertos if x['id'] == a.id]
+    else:
+        if not norm(a.descricao):
+            raise Erro('Informe a descrição.')
+        alvo = [x for x in abertos if norm(x.get('descricao')) == norm(a.descricao)] \
+            or [x for x in abertos if norm(a.descricao) in norm(x.get('descricao'))]
+    if a.mes:
+        alvo = [x for x in alvo if str(x.get('data', ''))[:7] == a.mes]
+    if not alvo:
+        raise Erro('Nenhum lembrete em aberto encontrado.')
+    if len(alvo) > 1:
+        raise Erro('Mais de um lembrete combina: ' + '; '.join(f'{x["descricao"]} ({x["data"]}, id {x["id"]})' for x in alvo))
+    x = alvo[0]
+    x['feito'], x['feitoEm'] = True, data(a.em) if a.em else hoje()
+    print(f'Lembrete "{x["descricao"]}" ({x["data"]}) feito em {x["feitoEm"]}.')
+
+
 def meses_padrao():
     h = date.today()
     out = []
@@ -343,6 +382,11 @@ def cmd_resumo(d, a):
         print(f'\nATRASADOS: {brl(sum(x["valor"] for x in atrasados))}')
         for x in sorted(atrasados, key=lambda x: x['vencimento']):
             print(f'  {x["vencimento"]}  {x["descricao"]}: {brl(x["valor"])}')
+    passados = sorted((x for x in d['lembretes'] if not x.get('feito') and str(x.get('data', '')) < h), key=lambda x: x['data'])
+    if passados:
+        print('\nLEMBRETES QUE PASSARAM DO PRAZO:')
+        for x in passados:
+            print(f'  {x["data"]}  {x["descricao"]}')
     for mes in ([a.mes] if a.mes else meses_padrao()):
         itens = sorted((x for x in d['lancamentos'] if x.get('natureza', 'pagar') == 'pagar'
                         and str(x.get('vencimento', ''))[:7] == mes), key=lambda x: x['vencimento'])
@@ -366,6 +410,11 @@ def cmd_resumo(d, a):
         receber = [x for x in d['lancamentos'] if x.get('natureza') == 'receber' and str(x.get('vencimento', ''))[:7] == mes]
         if receber:
             print(f'  A receber: {brl(tot(receber))}')
+        lembs = sorted((x for x in d['lembretes'] if str(x.get('data', ''))[:7] == mes), key=lambda x: x['data'])
+        if lembs:
+            print('  Lembretes:')
+            for x in lembs:
+                print(f'    {x["data"][8:]}/{x["data"][5:7]}  {x["descricao"]}  {"feito" if x.get("feito") else "aberto"}')
 
 
 # ---------- agenda (.ics) — mesmas regras de paraIcs em js/logica.js ----------
@@ -417,6 +466,20 @@ def para_ics(d, h, agora=None):
             for t in ('-P1DT15H', 'PT9H'):  # 9h de 2 dias antes e 9h do dia
                 linhas += ['BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + ics_texto(titulo), 'TRIGGER:' + t, 'END:VALARM']
         linhas.append('END:VEVENT')
+    lembs = sorted((x for x in d.get('lembretes', []) if str(x.get('data', '')) >= desde or not x.get('feito')),
+                   key=lambda x: x['data'])
+    for x in lembs:
+        feito = bool(x.get('feito'))
+        titulo = ('Feito: ' if feito else 'Lembrete: ') + (x.get('descricao') or 'lembrete')
+        desc = '\n'.join(t for t in (x.get('obs') or None, 'https://brenisio.github.io/financeiro/') if t)
+        linhas += ['BEGIN:VEVENT', f'UID:{x["id"]}@financeiro-breno', 'DTSTAMP:' + agora.strftime('%Y%m%dT%H%M%SZ'),
+                   'DTSTART;VALUE=DATE:' + x['data'].replace('-', ''),
+                   'DTEND;VALUE=DATE:' + soma_dias(x['data'], 1).replace('-', ''),
+                   'SUMMARY:' + ics_texto(titulo), 'DESCRIPTION:' + ics_texto(desc), 'TRANSP:TRANSPARENT']
+        if not feito:
+            for t in ('-P1DT15H', 'PT9H'):
+                linhas += ['BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + ics_texto(titulo), 'TRIGGER:' + t, 'END:VALARM']
+        linhas.append('END:VEVENT')
     linhas.append('END:VCALENDAR')
     return '\r\n'.join(ics_dobra(l) for l in linhas) + '\r\n'
 
@@ -425,7 +488,8 @@ def cmd_agenda(d, a):
     saida = a.saida or a.arquivo.with_name('financeiro-lembretes.ics')
     saida.write_bytes(para_ics(d, hoje()).encode('utf-8'))
     n = sum(1 for x in d['lancamentos'] if not x.get('pago'))
-    print(f'Lembretes de {n} conta(s) em aberto em {saida}. Importe no Google Agenda (Configurações → Importar).')
+    nl = sum(1 for x in d['lembretes'] if not x.get('feito'))
+    print(f'Lembretes de {n} conta(s) e {nl} lembrete(s) em aberto em {saida}. Importe no Google Agenda (Configurações → Importar).')
 
 
 # ---------- CLI ----------
@@ -484,6 +548,18 @@ def main(argv=None):
     s.add_argument('--em', help='data do pagamento (padrão: hoje)')
     s.add_argument('--conta', help='conta onde o recebimento entra (padrão: a conta corrente)')
 
+    s = sub.add_parser('lembrete', help='lembrete sem valor (ex.: cancelar Uber One até tal dia)')
+    s.add_argument('--descricao', required=True)
+    s.add_argument('--data', required=True, help='até quando (DD/MM/AAAA)')
+    s.add_argument('--obs')
+
+    s = sub.add_parser('feito', help='marca um lembrete como feito')
+    g = s.add_mutually_exclusive_group(required=True)
+    g.add_argument('--descricao')
+    g.add_argument('--id')
+    s.add_argument('--mes', help='AAAA-MM, se houver mais de um')
+    s.add_argument('--em', help='data (padrão: hoje)')
+
     s = sub.add_parser('resumo', help='soma faturas e contas por mês')
     s.add_argument('--mes', help='AAAA-MM')
 
@@ -501,7 +577,8 @@ def main(argv=None):
         if a.cmd in ('resumo', 'agenda'):
             (cmd_resumo if a.cmd == 'resumo' else cmd_agenda)(d, a)
             return 0
-        {'fatura': cmd_fatura, 'cartao': cmd_cartao, 'conta': cmd_conta, 'saldo': cmd_saldo, 'pago': cmd_pago}[a.cmd](d, a)
+        {'fatura': cmd_fatura, 'cartao': cmd_cartao, 'conta': cmd_conta, 'saldo': cmd_saldo, 'pago': cmd_pago,
+         'lembrete': cmd_lembrete, 'feito': cmd_feito}[a.cmd](d, a)
         gravar(a.arquivo, d)
     except Erro as e:
         print(f'erro: {e}', file=sys.stderr)

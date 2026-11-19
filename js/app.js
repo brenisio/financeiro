@@ -2,7 +2,7 @@
 import {
   COLECOES, MES, FORMAS, TIPOS_CONTA, deIso, hojeIso, quando, pad, brl, parseValor, valorParaCampo,
   deBackup, paraBackup, contagem, backupPendente, vazio, adicionar, atualizar, remover, pagar, desfazer,
-  fecharFatura, resumo, porBanco, porMes, somaMeses, doMes, mesInicial, parteMinha, disponivel, dias, ehData, mesDe, paraIcs
+  fecharFatura, resumo, porBanco, porMes, somaMeses, doMes, agendaDoMes, marcarFeito, desmarcarFeito, mesInicial, parteMinha, disponivel, dias, ehData, mesDe, paraIcs
 } from './logica.js';
 import { gravar as gravarIdb, avisarSePreciso } from './avisos.js';
 
@@ -185,9 +185,11 @@ function janela(tag, titulo, attrs, ...corpo) {
 
 // ---------- formulários ----------
 
+// "Lembrete" só aparece ao criar: troca para o formulário de lembrete (e volta), levando descrição e data
+const TIPOS = [['pagar', 'A pagar'], ['receber', 'A receber'], ['lembrete', 'Lembrete', 'novo']];
 const ESPECS = {
   lancamentos: { nome: 'conta', campos: [
-    { k: 'natureza', l: 'Tipo', t: 'seg', o: [['pagar', 'A pagar'], ['receber', 'A receber']] },
+    { k: 'natureza', l: 'Tipo', t: 'seg', o: TIPOS, troca: 1 },
     { k: 'descricao', l: 'Descrição', t: 'text', req: 1, ph: 'Ex.: Aluguel, Claro, MEI' },
     { k: 'valor', l: 'Valor (R$)', t: 'money', req: 1, ph: '182,40', meia: 1 },
     { k: 'vencimento', l: 'Vencimento', t: 'date', req: 1, meia: 1 },
@@ -206,6 +208,12 @@ const ESPECS = {
     { k: 'saldo', l: 'Saldo atual (R$)', t: 'money', req: 1, ph: '2.350,00', neg: 1, meia: 1 },
     { k: 'tipo', l: 'Tipo', t: 'select', o: TIPOS_CONTA, meia: 1 }
   ] },
+  lembretes: { nome: 'lembrete', campos: [
+    { k: 'tipo', l: 'Tipo', t: 'seg', o: TIPOS, troca: 1, so: 'novo' },
+    { k: 'descricao', l: 'O que fazer', t: 'text', req: 1, ph: 'Ex.: Cancelar Uber One' },
+    { k: 'data', l: 'Até quando', t: 'date', req: 1 },
+    { k: 'obs', l: 'Observação', t: 'textarea' }
+  ] },
   cartoes: { nome: 'cartão', campos: [
     { k: 'nome', l: 'Cartão', t: 'text', req: 1, ph: 'Ex.: Nubank' },
     { k: 'limite', l: 'Limite total (R$)', t: 'money', meia: 1 },
@@ -217,7 +225,7 @@ const ESPECS = {
 
 function abrirForm(colecao, item, padrao) {
   const base = ESPECS[colecao];
-  const campos = base.campos.filter(c => !c.cartoes || st.cartoes.length);
+  const campos = base.campos.filter(c => (!c.cartoes || st.cartoes.length) && !(c.so === 'novo' && item));
   const dados = Object.assign({}, padrao || {}, item ? item.dados : {});
   const msg = el('p', { class: 'msg', role: 'alert' });
   const ler = {}, alvo = {};
@@ -227,7 +235,9 @@ function abrirForm(colecao, item, padrao) {
     const id = 'f-' + colecao + '-' + c.k;
     const v = dados[c.k];
     if (c.t === 'seg') {
-      const radios = c.o.map(([val, rot]) => el('label', {}, el('input', { type: 'radio', name: id, value: val, checked: (v || c.o[0][0]) === val }), el('span', {}, rot)));
+      const opcoes = c.o.filter(o => !(o[2] === 'novo' && item));
+      const radios = opcoes.map(([val, rot]) => el('label', {}, el('input', { type: 'radio', name: id, value: val, checked: (v || c.o[0][0]) === val }), el('span', {}, rot)));
+      if (c.troca && !item) radios.forEach(r => r.querySelector('input').addEventListener('change', e => trocar(e.target.value)));
       ler[c.k] = () => radios.map(r => r.querySelector('input')).find(r => r.checked)?.value || c.o[0][0];
       alvo[c.k] = radios[0].querySelector('input');
       return el('div', { class: 'campo seg', role: 'radiogroup', 'aria-label': c.l }, radios);
@@ -261,6 +271,11 @@ function abrirForm(colecao, item, padrao) {
     return el('div', { class: 'campo' + (c.meia ? ' meia' : '') }, el('label', { for: id }, c.l, opcional ? el('span', { class: 'opc' }, ' (opcional)') : null), inp);
   };
 
+  function trocar(v) {
+    const descricao = alvo.descricao.value, quando = (alvo.vencimento || alvo.data).value;
+    if (v === 'lembrete' && colecao === 'lancamentos') abrirForm('lembretes', null, { tipo: 'lembrete', descricao, data: quando });
+    else if (v !== 'lembrete' && colecao === 'lembretes') abrirForm('lancamentos', null, { natureza: v, forma: 'boleto', descricao, vencimento: quando });
+  }
   const principais = campos.filter(c => !c.mais).map(montar);
   const extras = campos.filter(c => c.mais).map(montar);
   const mais = extras.length ? el('details', { class: 'mais', open: mudouMais }, el('summary', {}, 'Mais opções'), el('div', { class: 'campos' }, extras)) : null;
@@ -287,6 +302,7 @@ function abrirForm(colecao, item, padrao) {
     e.preventDefault();
     const out = {};
     for (const c of campos) {
+      if (c.so) continue; // seletor de tipo do lembrete: não é guardado
       const inp = alvo[c.k], raw = ler[c.k]();
       const erro = texto => { msg.textContent = texto; inp.setAttribute('aria-invalid', 'true'); if (mais && mais.contains(inp)) mais.open = true; inp.focus(); };
       inp.removeAttribute('aria-invalid');
@@ -309,8 +325,11 @@ function abrirForm(colecao, item, padrao) {
       } else out[c.k] = raw;
     }
     const hoje = hojeIso();
-    if (colecao !== 'lancamentos') out.atualizadoEm = hoje;
-    else {
+    if (colecao === 'contas' || colecao === 'cartoes') out.atualizadoEm = hoje;
+    else if (colecao === 'lembretes') {
+      if (!item) Object.assign(out, { feito: false, feitoEm: null });
+      mesSel = mesDe(out.data);
+    } else {
       if (out.outroValor > out.valor) { alvo.outroValor.setAttribute('aria-invalid', 'true'); mais.open = true; alvo.outroValor.focus(); msg.textContent = 'A parte de outra pessoa não pode passar do valor total.'; return; }
       if (out.outroValor && !out.outroNome) { alvo.outroNome.setAttribute('aria-invalid', 'true'); mais.open = true; alvo.outroNome.focus(); msg.textContent = 'Diga de quem é a outra parte.'; return; }
       if (!out.outroValor) { out.outroValor = undefined; out.outroNome = undefined; }
@@ -327,7 +346,7 @@ function abrirForm(colecao, item, padrao) {
     el('div', { class: 'campos' }, principais), mais, datalist, msg,
     fat,
     el('div', { class: 'rodape' }, btExcluir, el('button', { class: 'btn', type: 'button', onclick: fecharModal }, 'Cancelar'), el('button', { class: 'btn primario', type: 'submit' }, 'Salvar')));
-  if (colecao === 'cartoes') form.querySelector('h2').textContent = item ? 'Editar cartão' : 'Novo cartão';
+  if (colecao === 'cartoes' || colecao === 'lembretes') form.querySelector('h2').textContent = (item ? 'Editar ' : 'Novo ') + base.nome;
   abrirModal(form, alvo[campos.find(c => c.t !== 'seg').k]);
 }
 
@@ -351,6 +370,11 @@ function lancarFatura(c) {
   mesSel = mesDe(r.vencimento);
   aplicar(r.st, 'Fatura de ' + brl(r.valor) + ' lançada para ' + dataLonga(r.vencimento));
 }
+
+function feito(x) {
+  aplicar(marcarFeito(st, x.id, hojeIso()), 'Feito', { rot: 'Desfazer', fn: () => aplicar(desmarcarFeito(st, x.id), 'Voltou para a lista') });
+}
+function desfeito(x) { aplicar(desmarcarFeito(st, x.id), 'Voltou para a lista'); }
 
 // ---------- detalhes de uma conta ----------
 
@@ -395,6 +419,43 @@ function abrirDetalhe(l) {
   abrirModal(caixa, btPagar);
 }
 
+// ---------- lembretes ("cancelar Uber One até 25/11") ----------
+
+function estadoLembrete(x, hoje) {
+  if (x.dados.feito) return 'pago';
+  const n = dias(hoje, x.dados.data);
+  return n < 0 ? 'atrasado' : n <= 3 ? 'perto' : '';
+}
+function prazoLembrete(x, hoje) {
+  const d = x.dados;
+  if (d.feito) return 'Feito em ' + dataCurta(d.feitoEm || hoje);
+  return (dias(hoje, d.data) < 0 ? 'Era até ' : 'Até ') + dataCurta(d.data) + ' · ' + quando(d.data, hoje);
+}
+function abrirLembrete(x) {
+  const d = x.dados, hoje = hojeIso();
+  const bt = d.feito
+    ? el('button', { class: 'btn', type: 'button', onclick: () => { fecharModal(); desfeito(x); } }, 'Ainda não fiz')
+    : el('button', { class: 'btn primario', type: 'button', onclick: () => { fecharModal(); feito(x); } }, 'Feito');
+  const caixa = janela('div', d.descricao || '(sem descrição)', {},
+    el('span', { class: 'tag' }, 'Lembrete'),
+    el('p', { class: 'det-quando ' + estadoLembrete(x, hoje) }, prazoLembrete(x, hoje)),
+    el('dl', { class: 'info' }, [['Até', dataLonga(d.data)], d.obs ? ['Observação', d.obs] : null].filter(Boolean).map(([k, v]) => [el('dt', {}, k), el('dd', {}, v)])),
+    el('div', { class: 'rodape' }, el('button', { class: 'btn', type: 'button', onclick: () => abrirForm('lembretes', x) }, 'Editar'), bt));
+  abrirModal(caixa, bt);
+}
+function linhaLembrete(x, hoje) {
+  const d = x.dados, nome = d.descricao || '(sem descrição)';
+  return el('li', { class: 'item lembrete ' + estadoLembrete(x, hoje), 'data-id': x.id },
+    el('button', { class: 'check', type: 'button', 'aria-pressed': d.feito ? 'true' : 'false',
+      'aria-label': (d.feito ? 'Desmarcar lembrete: ' : 'Marcar lembrete como feito: ') + nome,
+      onclick: () => d.feito ? desfeito(x) : feito(x) }),
+    el('button', { class: 'abrir', type: 'button', 'aria-label': 'Lembrete: ' + nome + ', ' + prazoLembrete(x, hoje).toLowerCase() + '. Ver detalhes', onclick: () => abrirLembrete(x) },
+      el('span', { class: 't' }, nome),
+      el('span', { class: 'v' }, el('span', { class: 'tag' }, 'Lembrete')),
+      el('span', { class: 'm' }, prazoLembrete(x, hoje)),
+      el('span')));
+}
+
 // ---------- render ----------
 
 function linhaConta(l, hoje) {
@@ -424,7 +485,7 @@ function renderMes(hoje) {
     class: 'mes' + (r.atrasado ? ' atrasado' : ''), type: 'button', 'aria-pressed': r.mes === mesSel ? 'true' : 'false', 'data-mes': r.mes,
     onclick: () => { mesSel = r.mes; render(); }
   }, el('b', {}, MES[Number(r.mes.slice(5)) - 1] + (r.mes.slice(0, 4) !== atual.slice(0, 4) ? ' ' + r.mes.slice(2, 4) : '')),
-     el('span', {}, !r.n ? '—' : r.faltaSeu ? brl(r.faltaSeu).replace(/,\d\d$/, '') : 'tudo pago'))));
+     el('span', {}, !r.n ? (r.nLembretes ? r.nLembretes + (r.nLembretes > 1 ? ' lembretes' : ' lembrete') : '—') : r.faltaSeu ? brl(r.faltaSeu).replace(/,\d\d$/, '') : 'tudo pago'))));
   const sel = nav.querySelector('[aria-pressed="true"]'); // rola só a faixa dos meses, nunca a página
   if (sel && (sel.offsetLeft < nav.scrollLeft || sel.offsetLeft + sel.offsetWidth > nav.scrollLeft + nav.clientWidth)) nav.scrollLeft = sel.offsetLeft - 16;
 
@@ -437,6 +498,7 @@ function renderMes(hoje) {
   $('h-barra').setAttribute('aria-valuenow', String(pct));
   $('h-barra').firstElementChild.style.width = pct + '%';
   $('h-sub').textContent = !r ? 'Nada lançado para ' + nomeM + '.'
+    : !r.n ? 'Nenhuma conta para ' + nomeM + '.'
     : !r.faltaSeu ? 'Tudo pago em ' + nomeM + '.'
     : brl(r.pagoSeu) + ' pago de ' + brl(r.seu) + ' · ' + r.nAbertos + (r.nAbertos > 1 ? ' contas em aberto' : ' conta em aberto');
 
@@ -455,11 +517,11 @@ function renderMes(hoje) {
   $('h-partes').replaceChildren(...partes.map(([k, v]) => el('div', { class: 'parte' }, el('span', {}, k), el('b', {}, v))));
   $('h-partes').hidden = !partes.length;
 
-  const its = doMes(st, mesSel);
-  $('h-lista').textContent = 'Contas de ' + nomeM;
-  const nAb = its.filter(l => !l.dados.pago).length;
-  $('h-qtd').textContent = its.length ? (nAb ? nAb + ' em aberto' : 'todas pagas') : '';
-  $('lista').replaceChildren(...(its.length ? its.map(l => linhaConta(l, hoje))
+  const its = agendaDoMes(st, mesSel);
+  $('h-lista').textContent = (its.some(x => x.lembrete) ? 'Contas e lembretes de ' : 'Contas de ') + nomeM;
+  const nAb = its.filter(x => !x.item.dados.pago && !x.item.dados.feito).length;
+  $('h-qtd').textContent = its.length ? (nAb ? nAb + ' em aberto' : 'tudo feito') : '';
+  $('lista').replaceChildren(...(its.length ? its.map(x => x.lembrete ? linhaLembrete(x.item, hoje) : linhaConta(x.item, hoje))
     : [el('li', { class: 'vazio' }, 'Nenhuma conta em ' + nomeM + '. Use “Lançar”.')]));
 }
 
@@ -570,7 +632,7 @@ function abrirBackup(confirmacao) {
     el('div', { class: 'lembretes' },
       el('h3', {}, 'Lembretes pelo Google Agenda (e-mail)'),
       el('p', { class: 'bk-dica' }, 'Baixe o arquivo e importe no Google Agenda (no computador: Configurações → Importar). Cada conta vira um evento no vencimento, com aviso 2 dias antes e no dia, às 9h. Importar de novo atualiza.'),
-      el('button', { class: 'btn', type: 'button', disabled: !st.lancamentos.length, onclick: () => { baixarAgenda(); fecharModal(); } }, 'Baixar lembretes (.ics)')));
+      el('button', { class: 'btn', type: 'button', disabled: !st.lancamentos.length && !st.lembretes.length, onclick: () => { baixarAgenda(); fecharModal(); } }, 'Baixar lembretes (.ics)')));
   abrirModal(caixa, confirmacao ? confirmacao.querySelector('button') : btBaixar);
   renderAvisos();
 }
@@ -584,7 +646,7 @@ function importarObjeto(obj) {
     st = novo; mesSel = null;
     meta = { alteradoEm: salvo || new Date().toISOString(), exportadoEm: salvo || new Date().toISOString() };
     gravarLocal(); fecharModal(); render();
-    toast('Backup aberto: ' + c.lancamentos + ' lançamentos, ' + c.contas + ' contas, ' + c.cartoes + ' cartões');
+    toast('Backup aberto: ' + c.lancamentos + ' lançamentos, ' + c.contas + ' contas, ' + c.cartoes + ' cartões' + (c.lembretes ? ', ' + c.lembretes + ' lembretes' : ''));
   };
   if (!COLECOES.some(n => st[n].length)) return efetivar();
   const maisVelho = salvo && meta.alteradoEm && salvo < meta.alteradoEm;

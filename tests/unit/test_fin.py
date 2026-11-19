@@ -260,3 +260,29 @@ class Agenda(Base):
         self.assertIn('1 conta(s)', out)
         self.assertTrue((self.arq.parent / 'financeiro-lembretes.ics').exists())
         self.assertEqual(self.arq.read_bytes(), antes)
+
+
+class Lembretes(Base):
+    def test_lembrete_nao_duplica_e_feito(self):
+        self.ok('lembrete', '--descricao', 'Cancelar Uber One', '--data', '25/11/2026')
+        self.ok('lembrete', '--descricao', 'cancelar uber one', '--data', '20/11/2026', '--obs', 'antes de renovar')
+        ls = self.dados()['lembretes']
+        self.assertEqual(len(ls), 1)
+        self.assertEqual((ls[0]['data'], ls[0]['obs'], ls[0]['feito']), ('2026-11-20', 'antes de renovar', False))
+        self.assertIn('Lembretes:', self.ok('resumo', '--mes', '2026-11'))
+        self.ok('feito', '--descricao', 'Uber', '--em', '18/11/2026')
+        ls = self.dados()['lembretes']
+        self.assertEqual((ls[0]['feito'], ls[0]['feitoEm']), (True, '2026-11-18'))
+        self.falha('feito', '--descricao', 'Uber')
+        self.assertEqual(self.dados()['lancamentos'], [])
+
+    def test_lembrete_data_invalida_nao_grava(self):
+        self.falha('lembrete', '--descricao', 'X', '--data', '31/02/2026')
+        self.assertFalse(self.arq.exists())
+
+    def test_ics_do_lembrete(self):
+        self.ok('lembrete', '--descricao', 'Cancelar Uber One', '--data', '20/11/2026', '--obs', 'antes da renovação')
+        ics = fin.para_ics(self.dados(), '2026-10-31', fin.datetime(2026, 10, 31, 13, 0, tzinfo=fin.timezone.utc)).replace('\r\n ', '')
+        self.assertIn('DTSTART;VALUE=DATE:20261120\r\nDTEND;VALUE=DATE:20261121\r\nSUMMARY:Lembrete: Cancelar Uber One\r\n'
+                      'DESCRIPTION:antes da renovação\\nhttps://brenisio.github.io/financeiro/', ics)
+        self.assertEqual(ics.count('BEGIN:VALARM'), 2)

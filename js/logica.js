@@ -1,7 +1,7 @@
 // Regras do Financeiro sem DOM: datas, valores, backup e somas. Testado em tests/unit/logica.test.js.
-// Estado: { lancamentos: [{ id, dados }], contas: [...], cartoes: [...] } — o mesmo formato do backup, com `dados` separado do id.
+// Estado: { lancamentos: [{ id, dados }], contas: [...], cartoes: [...], lembretes: [...] } — o mesmo formato do backup, com `dados` separado do id.
 
-export const COLECOES = ['lancamentos', 'contas', 'cartoes'];
+export const COLECOES = ['lancamentos', 'contas', 'cartoes', 'lembretes'];
 export const MES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 export const FORMAS = [['boleto', 'Boleto'], ['pix', 'Pix'], ['debito', 'Débito automático'], ['fatura', 'Fatura de cartão'], ['transferencia', 'Transferência'], ['outro', 'Outro']];
 export const TIPOS_CONTA = [['corrente', 'Conta corrente'], ['poupanca', 'Poupança'], ['carteira', 'Dinheiro / carteira'], ['investimento', 'Investimento']];
@@ -70,7 +70,7 @@ export const valorParaCampo = v => (v == null || v === '') ? '' : centavos(v).to
 // ---------- backup ----------
 
 export const novoId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-export const vazio = () => ({ lancamentos: [], contas: [], cartoes: [] });
+export const vazio = () => ({ lancamentos: [], contas: [], cartoes: [], lembretes: [] });
 
 /** Valida e converte o JSON do backup. Lança Error com mensagem legível. */
 export function deBackup(obj) {
@@ -93,6 +93,9 @@ export function deBackup(obj) {
         const outro = Math.min(Math.max(centavos(dados.outroValor), 0), dados.valor);
         if (outro) { dados.outroValor = outro; dados.outroNome = String(dados.outroNome || '').trim() || 'Outra pessoa'; }
         else { delete dados.outroValor; delete dados.outroNome; }
+      } else if (n === 'lembretes') { // "cancelar Uber One até tal dia": sem valor, fora das somas
+        if (!ehData(dados.data)) problemas.push(`lembrete “${dados.descricao || i + 1}” sem data válida`);
+        dados.feito = dados.feito === true;
       } else if (n === 'contas') dados.saldo = centavos(dados.saldo);
       else { dados.limite = centavos(dados.limite); dados.fatura = centavos(dados.fatura); }
       st[n].push({ id: chave, dados });
@@ -260,6 +263,7 @@ export function porMes(st, hoje) {
   const atual = mesDe(hoje);
   const janela = new Set([-1, 0, 1, 2, 3].map(n => mesDe(somaMeses(atual + '-01', n))));
   abertos(st).filter(ehPagar).forEach(l => janela.add(mesDe(l.dados.vencimento)));
+  lembretesAbertos(st).forEach(x => janela.add(mesDe(x.dados.data)));
   return [...janela].sort().map(m => {
     const its = st.lancamentos.filter(l => ehPagar(l) && mesDe(l.dados.vencimento) === m);
     const faturas = soma(its.filter(l => l.dados.forma === 'fatura'));
@@ -268,13 +272,15 @@ export function porMes(st, hoje) {
     const outros = {};
     for (const l of its) if (l.dados.outroValor) outros[l.dados.outroNome] = centavos((outros[l.dados.outroNome] || 0) + l.dados.outroValor);
     const receber = st.lancamentos.filter(l => !ehPagar(l) && mesDe(l.dados.vencimento) === m);
+    const lemb = lembretesAbertos(st).filter(x => mesDe(x.dados.data) === m);
     return {
       mes: m, atual: m === atual, faturas, contas: centavos(total - faturas), total, pago, falta: centavos(total - pago), n: its.length,
       seu: somaMinha(its), faltaSeu: somaMinha(abertosMes), pagoSeu: somaMinha(its.filter(l => l.dados.pago)),
       outros: Object.entries(outros).map(([nome, valor]) => ({ nome, valor })),
-      receber: soma(receber), nAbertos: abertosMes.length, atrasado: abertosMes.some(l => l.dados.vencimento < hoje)
+      receber: soma(receber), nAbertos: abertosMes.length, nLembretes: lemb.length,
+      atrasado: abertosMes.some(l => l.dados.vencimento < hoje) || lemb.some(x => x.dados.data < hoje)
     };
-  }).filter(r => r.n);
+  }).filter(r => r.n || r.nLembretes);
 }
 
 /** Lançamentos de um mês: em aberto por vencimento, depois os pagos */
@@ -283,6 +289,21 @@ export function doMes(st, mes) {
   const porData = (a, b) => a.dados.vencimento.localeCompare(b.dados.vencimento) || (a.dados.descricao || '').localeCompare(b.dados.descricao || '');
   return [...its.filter(l => !l.dados.pago).sort(porData), ...its.filter(l => l.dados.pago).sort(porData)];
 }
+
+const dataDe = x => x.dados.vencimento || x.dados.data || '';
+const fechado = x => !!(x.dados.pago || x.dados.feito);
+/** Contas e lembretes de um mês juntos: em aberto por data, depois os pagos/feitos. Lembrete leva `lembrete: true`. */
+export function agendaDoMes(st, mes) {
+  const its = [...doMes(st, mes).map(item => ({ item, lembrete: false })),
+    ...(st.lembretes || []).filter(x => mesDe(x.dados.data) === mes).map(item => ({ item, lembrete: true }))];
+  const porData = (a, b) => dataDe(a.item).localeCompare(dataDe(b.item)) || a.lembrete - b.lembrete
+    || (a.item.dados.descricao || '').localeCompare(b.item.dados.descricao || '');
+  return [...its.filter(x => !fechado(x.item)).sort(porData), ...its.filter(x => fechado(x.item)).sort(porData)];
+}
+export const lembretesAbertos = st => (st.lembretes || []).filter(x => !x.dados.feito)
+  .sort((a, b) => a.dados.data.localeCompare(b.dados.data) || (a.dados.descricao || '').localeCompare(b.dados.descricao || ''));
+export function marcarFeito(st, id, hoje) { return atualizar(st, 'lembretes', id, { feito: true, feitoEm: hoje }); }
+export function desmarcarFeito(st, id) { return atualizar(st, 'lembretes', id, { feito: false, feitoEm: null }); }
 
 /** Mês que a tela abre: o próximo com conta em aberto (atrasos aparecem num aviso à parte); sem nada em aberto, o atual */
 export function mesInicial(st, hoje) {
@@ -301,7 +322,7 @@ export function disponivel(st, cartao) {
 // Cada conta vira um evento de dia inteiro no vencimento, com lembrete 2 dias antes e no dia, às 9h.
 // UID fixo por lançamento: importar de novo atualiza o evento em vez de duplicar. Pagos viram "Pago: …" sem lembrete.
 
-const icsTexto = s => String(s ?? '').replace(/\\/g, '\\\\').replace(/;/g, '\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+const icsTexto = s => String(s ?? '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
 /** Quebra linhas em até 75 bytes (RFC 5545), sem partir caractere acentuado */
 function icsDobra(linha) {
   const partes = [];
@@ -341,22 +362,43 @@ export function paraIcs(st, hoje, agora = new Date()) {
       linhas.push('BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsTexto(titulo), 'TRIGGER:' + t, 'END:VALARM');
     linhas.push('END:VEVENT');
   }
+  const lembs = (st.lembretes || []).filter(x => x.dados.data >= desde || !x.dados.feito)
+    .sort((a, b) => a.dados.data.localeCompare(b.dados.data));
+  for (const x of lembs) {
+    const d = x.dados;
+    const titulo = (d.feito ? 'Feito: ' : 'Lembrete: ') + (d.descricao || 'lembrete');
+    const desc = [d.obs || null, 'https://brenisio.github.io/financeiro/'].filter(Boolean).join('\n');
+    linhas.push('BEGIN:VEVENT', 'UID:' + x.id + '@financeiro-breno', 'DTSTAMP:' + icsCarimbo(agora),
+      'DTSTART;VALUE=DATE:' + icsData(d.data), 'DTEND;VALUE=DATE:' + icsData(somaDias(d.data, 1)),
+      'SUMMARY:' + icsTexto(titulo), 'DESCRIPTION:' + icsTexto(desc), 'TRANSP:TRANSPARENT');
+    if (!d.feito) for (const t of ['-P1DT15H', 'PT9H'])
+      linhas.push('BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsTexto(titulo), 'TRIGGER:' + t, 'END:VALARM');
+    linhas.push('END:VEVENT');
+  }
   linhas.push('END:VCALENDAR');
   return linhas.map(icsDobra).join('\r\n') + '\r\n';
 }
 
 // ---------- aviso do dia (notificação do app) ----------
 
-/** Um aviso por dia, juntando as contas a pagar que vencem em até 2 dias ou já venceram. null = nada a avisar. */
+/** Um aviso por dia, juntando as contas a pagar que vencem em até 2 dias ou já venceram, e os lembretes nesse prazo. null = nada a avisar. */
 export function avisoDoDia(st, hoje) {
   const its = abertos(st).filter(l => ehPagar(l) && dias(hoje, l.dados.vencimento) <= 2);
-  if (!its.length) return null;
+  const lembs = lembretesAbertos(st).filter(x => dias(hoje, x.dados.data) <= 2);
+  if (!its.length && !lembs.length) return null;
+  const ate = x => { const n = dias(hoje, x.dados.data); return n < 0 ? 'passou ' + quando(x.dados.data, hoje) : n < 2 ? 'até ' + quando(x.dados.data, hoje) : 'em 2 dias'; };
+  const linhasL = lembs.map(x => 'Lembrete: ' + (x.dados.descricao || 'lembrete') + ' · ' + ate(x));
+  if (!its.length) return {
+    titulo: lembs.length > 1 ? lembs.length + ' lembretes' : (lembs[0].dados.descricao || 'Lembrete') + ' · ' + ate(lembs[0]),
+    corpo: linhasL.join('\n'), tag: 'contas-' + hoje, n: lembs.length
+  };
   const prazo = l => { const n = dias(hoje, l.dados.vencimento); return n < 0 ? 'atrasada ' + quando(l.dados.vencimento, hoje) : n === 0 ? 'vence hoje' : n === 1 ? 'vence amanhã' : 'vence em 2 dias'; };
   const valor = l => brl(l.dados.valor) + (l.dados.outroValor ? ' (seu ' + brl(parteMinha(l)) + ')' : '');
   const atrasadas = its.filter(l => l.dados.vencimento < hoje);
   const titulo = atrasadas.length
     ? (atrasadas.length > 1 ? atrasadas.length + ' contas atrasadas' : (atrasadas[0].dados.descricao || 'Conta') + ' está atrasada')
     : its.length > 1 ? its.length + ' contas vencendo' : (its[0].dados.descricao || 'Conta') + ' ' + prazo(its[0]);
-  const corpo = its.map(l => (l.dados.descricao || 'Conta') + ': ' + prazo(l) + ' · ' + valor(l)).join('\n');
-  return { titulo, corpo, tag: 'contas-' + hoje, n: its.length };
+  const corpo = [...its.map(l => (l.dados.descricao || 'Conta') + ': ' + prazo(l) + ' · ' + valor(l)), ...linhasL].join('\n');
+  const extra = lembs.length ? ' + ' + lembs.length + (lembs.length > 1 ? ' lembretes' : ' lembrete') : '';
+  return { titulo: titulo + extra, corpo, tag: 'contas-' + hoje, n: its.length + lembs.length };
 }

@@ -5,8 +5,8 @@ Repo: github.com/brenisio/financeiro (conta pessoal; usar `GH_TOKEN=$(gh auth to
 
 ## Estrutura e testes
 
-- `index.html` (HTML + CSS) · `js/logica.js` (regras puras: datas, valores, backup, somas por mês, sua parte × de outros, recorrência) · `js/app.js` (DOM, localStorage, import/export).
-- Tela: uma coluna; abas de mês → destaque "falta pagar (sua parte)" → lista do mês (círculo = paguei, linha = detalhes) → cartões e bancos. Backup fica no botão do topo; "Lançar" é o botão fixo.
+- `index.html` (HTML + CSS) · `js/logica.js` (regras puras: datas, valores, backup, somas por mês, sua parte × de outros, recorrência, lembretes) · `js/app.js` (DOM, localStorage, import/export).
+- Tela: uma coluna; abas de mês → destaque "falta pagar (sua parte)" → lista do mês com contas e lembretes por data (círculo = paguei/feito, linha = detalhes; lembrete tem a tag "Lembrete" e entra pelo seletor de tipo do "Lançar") → cartões e bancos. Backup fica no botão do topo; "Lançar" é o botão fixo.
 - `ferramentas/fin.py` edita o backup pela linha de comando com as mesmas regras (dia 31, valor "1.800" = mil e oitocentos, sem duplicar).
 - Testes: `npm test` (node --test da lógica + unittest do fin.py) e `npm run test:ui` (Playwright: desktop Chromium, Pixel 5, Firefox; axe; overflow 320–1280px). Já limitados a 4 workers.
   Porta dos testes: 8797 (a 8792 é usada por outro projeto do Breno). O relógio dos testes de UI é fixo em 31/10/2026.
@@ -31,6 +31,9 @@ python3 ferramentas/fin.py conta  --descricao "Aluguel" --valor 1800 --venciment
 python3 ferramentas/fin.py saldo  --conta "Cofrinho 120% CDI" --valor 2350 --tipo investimento --banco "Mercado Pago"
 python3 ferramentas/fin.py pago   --descricao "Aluguel" [--mes 2026-11] [--em 05/11/2026]
 python3 ferramentas/fin.py resumo [--mes 2026-11]
+# lembrete sem valor (não entra nas somas; aparece na lista do mês, no aviso do dia e no .ics):
+python3 ferramentas/fin.py lembrete --descricao "Cancelar Uber One" --data 25/11/2026 [--obs "..."]
+python3 ferramentas/fin.py feito    --descricao "Uber One" [--mes 2026-11] [--em 24/11/2026]
 # parte de outra pessoa no mesmo boleto (ex.: cartão adicional da Agatha), em fatura ou conta:
 python3 ferramentas/fin.py fatura ... --outro-nome Agatha --outro-valor 2.048,92
 ```

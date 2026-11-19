@@ -154,6 +154,10 @@ button { font: inherit; color: inherit; cursor: pointer; -webkit-tap-highlight-c
 .item.pago .t, .item.pago .v { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
 .item.receber .v { color: var(--good); }
 
+.tag { display: inline-block; align-self: flex-start; padding: 2px 8px; border-radius: 99px; background: var(--warn-soft); color: var(--warn);
+  font-size: 12px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; }
+.item.pago .tag { background: var(--soft); color: var(--muted); }
+
 /* cartões e bancos */
 .linha { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: baseline; width: 100%;
   padding: 14px 16px; border: 0; background: none; text-align: left; min-height: 60px; }
@@ -218,6 +222,7 @@ button { font: inherit; color: inherit; cursor: pointer; -webkit-tap-highlight-c
 .campo [aria-invalid="true"] { border-color: var(--danger); }
 fieldset.campo { border: 0; padding: 0; margin: 0; }
 .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--soft); border-radius: 14px; }
+.seg:has(label:nth-child(3)) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .seg label { display: grid; place-items: center; min-height: 42px; border-radius: 10px; font-size: 15px; font-weight: 700; color: var(--muted); cursor: pointer; }
 .seg input { position: absolute; opacity: 0; pointer-events: none; }
 .seg input:checked + span { color: var(--ink); }
