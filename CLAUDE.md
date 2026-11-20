@@ -45,6 +45,8 @@ python3 ferramentas/fin.py fatura ... --outro-nome Agatha --outro-valor 2.048,92
   o navegador decide a frequência), roda `avisoDoDia` (logica.js) e mostra um aviso por dia: contas a pagar que vencem em até 2 dias ou atrasadas.
 - Sem servidor não há push garantido: no iPhone e no Firefox só funciona com a página aberta. O .ics do Google Agenda é o reforço.
 - Teste real do SW: `tests/ui/site.spec.js`, bloco "app instalável" (Chromium completo, dispara o periodic sync via CDP).
+  Falha conhecida: esse teste usa o relógio real (não o fixo de 31/10/2026); desde 20/11/2026 o backup de exemplo tem 3 contas
+  atrasadas e ele espera "Claro está atrasada". Já falhava antes dos lembretes; o conserto é fixar a data no teste do SW.
 
 ## Lembretes (Google Agenda)
 
@@ -52,7 +54,7 @@ python3 ferramentas/fin.py fatura ... --outro-nome Agatha --outro-valor 2.048,92
 Cada conta em aberto vira evento de dia inteiro no vencimento, com aviso 9h de 2 dias antes e 9h do dia; UID fixo por lançamento,
 então reimportar atualiza. Depois de lançar/alterar contas, rode `agenda` e lembre o Breno de importar o .ics
 (agenda.google.com → Configurações → Importar, de preferência numa agenda "Financeiro" com notificação por e-mail).
-`paraIcs` (logica.js) e `para_ics` (fin.py) têm de gerar bytes idênticos.
+`paraIcs` (logica.js) e `para_ics` (fin.py) têm de gerar bytes idênticos (já divergiram uma vez: `;` sem escape no JS).
 
 Ao relançar uma fatura, repita `--minimo`, `--fechamento` e `--obs`: a observação é refeita a cada chamada.
 Fatura com cartão adicional de outra pessoa: some por portador no PDF e lance a parte dela com `--outro-*`
@@ -72,6 +74,21 @@ Fatura com cartão adicional de outra pessoa: some por portador no PDF e lance a
 
 Contas fixas (aluguel, seguro obra, Claro, MEI etc.) entram com `conta --mensal`; marcar pago gera a do mês seguinte.
 Boletos em PDF seguem o mesmo fluxo, com `conta` no lugar de `fatura`.
+
+## Lembretes sem valor ("cancelar Uber One até 25/11")
+
+- Coleção `lembretes` no backup: `{ id, descricao, data, obs, feito, feitoEm }`. Backup antigo sem ela abre normal (lista vazia).
+- Não entram em nenhuma soma (destaque, abas, falta pagar). Na lista do mês aparecem por data junto das contas, com a tag
+  "Lembrete"; os feitos vão pro fim. Mês que só tem lembrete ganha aba ("1 lembrete").
+- No site: "Lançar" → tipo "Lembrete" (leva a descrição e a data já digitadas). Ao editar, não dá pra trocar o tipo.
+- Entram no aviso do dia (até 2 dias antes ou já passados) e no .ics ("Lembrete: …" com os mesmos alarmes; feito vira "Feito: …" sem alarme).
+- Quando o Breno pedir um lembrete: `fin.py lembrete ...`, depois `fin.py agenda`, e lembre de importar o backup no site.
+  Mesmo nome no mesmo mês atualiza em vez de duplicar.
+
+## Publicar
+
+Commit e push só quando o Breno pedir. O push usa a conta pessoal (token de `gh auth token --user brenisio`).
+O Pages leva alguns minutos; o service worker pode segurar a versão antiga até um Ctrl+Shift+R.
 
 ## Regras
 
